@@ -1,4 +1,4 @@
-import { env } from '../../config/env';
+import { env } from '../../config/env.js';
 
 // Types matching Automation-Service responses
 export interface NamecheapDomain {
