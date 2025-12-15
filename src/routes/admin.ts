@@ -5,7 +5,6 @@ import {
   getPricebookItems,
   createPricebookItem,
   updatePricebookItem,
-  getAllPricingRules,
   getAllPricingRulesWithConditions,
   createPricingRule,
   createPricingRuleConditions,

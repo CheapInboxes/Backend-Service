@@ -57,13 +57,13 @@ class AutomationClient {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
       const error = new Error(errorData.error || `Request failed: ${response.status}`);
       (error as any).status = response.status;
       throw error;
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
   // Namecheap endpoints
