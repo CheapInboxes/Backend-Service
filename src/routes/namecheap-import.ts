@@ -64,7 +64,7 @@ export async function namecheapImportRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { orgId } = request.params;
       const { username, password } = request.body;
-      const userId = request.user!.sub;
+      const userId = request.user!.id;
 
       // Validate user has access to org
       await validateMembership(orgId, userId);
@@ -126,7 +126,7 @@ export async function namecheapImportRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       const { orgId, sessionId } = request.params;
-      const userId = request.user!.sub;
+      const userId = request.user!.id;
 
       await validateMembership(orgId, userId);
 
@@ -188,7 +188,7 @@ export async function namecheapImportRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { orgId, sessionId } = request.params;
       const { code } = request.body;
-      const userId = request.user!.sub;
+      const userId = request.user!.id;
 
       await validateMembership(orgId, userId);
 
@@ -264,7 +264,7 @@ export async function namecheapImportRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { orgId, sessionId } = request.params;
       const { domains, nameservers } = request.body;
-      const userId = request.user!.sub;
+      const userId = request.user!.id;
 
       await validateMembership(orgId, userId);
 
@@ -332,7 +332,7 @@ export async function namecheapImportRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       const { orgId, sessionId } = request.params;
-      const userId = request.user!.sub;
+      const userId = request.user!.id;
 
       await validateMembership(orgId, userId);
 

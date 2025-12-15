@@ -13,9 +13,6 @@ import {
 import type Stripe from 'stripe';
 import type { 
   PricingRuleCondition, 
-  PricingRuleConditionType,
-  PricingRuleConditionOperator,
-  PricingRuleUsage,
   PricingRuleWithConditions 
 } from '../types/index.js';
 
@@ -41,6 +38,7 @@ export interface PricebookItem {
 export interface PricingRule {
   id: string;
   name: string;
+  description: string | null;
   scope_type: 'global' | 'organization' | 'item';
   organization_id: string | null;
   pricebook_item_id: string | null;

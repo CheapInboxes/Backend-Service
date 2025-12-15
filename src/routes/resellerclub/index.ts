@@ -7,3 +7,5 @@ export async function resellerclubRoutes(fastify: FastifyInstance) {
   await fastify.register(resellerclubPricingRoutes);
 }
 
+
+

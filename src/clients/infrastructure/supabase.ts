@@ -19,3 +19,5 @@ const supabaseAnon = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
 
 export { supabase, supabaseAnon };
 
+
+
