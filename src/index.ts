@@ -33,26 +33,9 @@ const fastify = Fastify({
 // Start server
 const start = async () => {
   try {
-    // Register CORS
+    // Register CORS (only needed for local dev API docs, server actions don't need CORS)
     await fastify.register(fastifyCors, {
-      origin: (origin, cb) => {
-        // Allow localhost for development
-        const allowedOrigins = [
-          'http://localhost:3000',
-          'http://localhost:3001', 
-          'http://localhost:3002',
-        ];
-        
-        // Allow any Vercel preview/production URLs
-        if (!origin || 
-            allowedOrigins.includes(origin) ||
-            origin.endsWith('.vercel.app') ||
-            origin.endsWith('.cheapinboxes.com')) {
-          cb(null, true);
-        } else {
-          cb(null, false);
-        }
-      },
+      origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
