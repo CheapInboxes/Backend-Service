@@ -3,6 +3,7 @@ import { Domain, DomainRun } from '../types/index.js';
 import { validateMembership } from './orgService.js';
 import { createUsageEvent } from './usageService.js';
 import * as namecheapClient from '../clients/domain-registrars/namecheap.js';
+import * as resellerclubClient from '../clients/domain-registrars/resellerclub/index.js';
 import * as cloudflareClient from '../clients/dns/cloudflare.js';
 
 export async function createDomain(
@@ -124,8 +125,15 @@ export async function provisionDomain(runId: string): Promise<{
     const externalRefs: Record<string, any> = {};
 
     // Provision based on source provider
-    if (domain.source_provider === 'namecheap' || domain.source_provider === 'resellerclub') {
-      // Register domain
+    // 'cheapinboxes' = purchased through our platform (we register via ResellerClub)
+    // 'namecheap' = imported domains from Namecheap
+    // 'external' = domains already registered elsewhere (no registration needed)
+    if (domain.source_provider === 'cheapinboxes') {
+      // Register domain via ResellerClub (our backend registrar)
+      const registerResult = await resellerclubClient.registerDomain(domain.domain);
+      externalRefs.order_id = registerResult.orderId;
+    } else if (domain.source_provider === 'namecheap') {
+      // Register domain via Namecheap (for imported domains)
       const registerResult = await namecheapClient.registerDomain(domain.domain);
       externalRefs.order_id = registerResult.orderId;
     }

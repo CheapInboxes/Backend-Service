@@ -1488,6 +1488,33 @@ export function createResellerClubClient(config: ResellerClubConfig): ResellerCl
   return new ResellerClubClient(config);
 }
 
+// Simple wrapper for domain registration (matches namecheap interface)
+// TODO: Replace mock with actual ResellerClub API integration
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function registerDomain(domain: string): Promise<{ orderId: string; success: boolean }> {
+  console.log(`[MOCK] ResellerClub: Registering domain ${domain}`);
+  await delay(200 + Math.random() * 300); // 200-500ms delay
+
+  const orderId = `RC-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+  console.log(`[MOCK] ResellerClub: Domain ${domain} registered successfully with order ID ${orderId}`);
+
+  return {
+    orderId,
+    success: true,
+  };
+}
+
+export async function checkAvailability(domain: string): Promise<{ available: boolean }> {
+  console.log(`[MOCK] ResellerClub: Checking availability for ${domain}`);
+  await delay(100 + Math.random() * 200); // 100-300ms delay
+
+  console.log(`[MOCK] ResellerClub: Domain ${domain} is available`);
+  return {
+    available: true,
+  };
+}
+
 export default ResellerClubClient;
 
 

@@ -224,7 +224,7 @@ export async function createOrderFromCheckout(
         order_id: order.id,
         domain: cartDomain.domain,
         status: 'pending',
-        source_provider: 'namecheap', // Default provider
+        source_provider: 'cheapinboxes', // Purchased through our platform
       })
       .select()
       .single();
