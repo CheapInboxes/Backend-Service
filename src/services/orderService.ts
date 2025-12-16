@@ -213,6 +213,7 @@ export async function createCheckoutSession(
 /**
  * Called by webhook when checkout.session.completed fires
  * Creates pending domains and mailboxes from the cart snapshot
+ * Also creates invoice and payment records for the order
  */
 export async function createOrderFromCheckout(
   checkoutSessionId: string,
@@ -239,47 +240,59 @@ export async function createOrderFromCheckout(
       .eq('id', order.id);
   }
 
-  // Create domains and mailboxes from cart
-  for (const cartDomain of cart.domains) {
-    // Create domain record
-    const { data: domain, error: domainError } = await supabase
-      .from('domains')
-      .insert({
-        organization_id: order.organization_id,
-        order_id: order.id,
-        domain: cartDomain.domain,
-        status: 'pending',
-        source_provider: 'cheapinboxes', // Purchased through our platform
-      })
-      .select()
-      .single();
+  // Create domains and mailboxes from cart (batch inserts for performance)
+  const domainInserts = cart.domains.map(cartDomain => ({
+    organization_id: order.organization_id,
+    order_id: order.id,
+    domain: cartDomain.domain,
+    status: 'pending',
+    source_provider: 'cheapinboxes',
+  }));
 
-    if (domainError || !domain) {
-      console.error(`Failed to create domain ${cartDomain.domain}:`, domainError);
-      continue;
-    }
+  const { data: createdDomains, error: domainsError } = await supabase
+    .from('domains')
+    .insert(domainInserts)
+    .select();
 
-    // Create mailbox records (without names/emails yet - will be set in wizard)
-    const mailboxCount = cartDomain.mailboxes.count;
-    const provider = cartDomain.mailboxes.provider;
+  if (domainsError) {
+    console.error('Failed to create domains:', domainsError);
+  }
 
-    for (let i = 0; i < mailboxCount; i++) {
-      const { error: mailboxError } = await supabase
-        .from('mailboxes')
-        .insert({
+  // Create mailbox records for each domain
+  if (createdDomains && createdDomains.length > 0) {
+    const mailboxInserts: any[] = [];
+    
+    for (let i = 0; i < createdDomains.length; i++) {
+      const domain = createdDomains[i];
+      const cartDomain = cart.domains[i];
+      const mailboxCount = cartDomain.mailboxes.count;
+      const provider = cartDomain.mailboxes.provider;
+
+      for (let j = 0; j < mailboxCount; j++) {
+        mailboxInserts.push({
           organization_id: order.organization_id,
           domain_id: domain.id,
           order_id: order.id,
-          full_email: `pending-${i + 1}@${cartDomain.domain}`, // Placeholder until wizard
+          full_email: `pending-${j + 1}@${cartDomain.domain}`,
           status: 'pending',
           source_provider: provider,
         });
+      }
+    }
 
-      if (mailboxError) {
-        console.error(`Failed to create mailbox for ${cartDomain.domain}:`, mailboxError);
+    if (mailboxInserts.length > 0) {
+      const { error: mailboxesError } = await supabase
+        .from('mailboxes')
+        .insert(mailboxInserts);
+
+      if (mailboxesError) {
+        console.error('Failed to create mailboxes:', mailboxesError);
       }
     }
   }
+
+  // Create invoice and payment records for the order
+  await createOrderInvoiceAndPayment(order.id, order.organization_id, cart, checkoutSessionId);
 
   // Update order status to pending_config (ready for wizard)
   const { data: updatedOrder, error: updateError } = await supabase
@@ -294,6 +307,76 @@ export async function createOrderFromCheckout(
   }
 
   return updatedOrder as Order;
+}
+
+/**
+ * Create invoice and payment records for a completed order checkout
+ */
+async function createOrderInvoiceAndPayment(
+  orderId: string,
+  orgId: string,
+  cart: CartSnapshot,
+  checkoutSessionId: string
+): Promise<void> {
+  try {
+    // Get the Stripe checkout session to retrieve payment details
+    const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+      expand: ['payment_intent', 'payment_intent.latest_charge'],
+    });
+
+    const paymentIntent = session.payment_intent as Stripe.PaymentIntent | null;
+    const charge = paymentIntent?.latest_charge as Stripe.Charge | null;
+
+    // Calculate total in cents
+    const domainTotalCents = Math.round(cart.totals.domainTotal * 100);
+    const mailboxTotalCents = Math.round(cart.totals.mailboxMonthly * 100);
+    const totalCents = domainTotalCents + mailboxTotalCents;
+
+    // Create invoice for the order
+    const today = new Date();
+    const { data: invoice, error: invoiceError } = await supabase
+      .from('invoices')
+      .insert({
+        organization_id: orgId,
+        order_id: orderId,
+        period_start: today.toISOString().split('T')[0],
+        period_end: today.toISOString().split('T')[0],
+        total_cents: totalCents,
+        status: 'paid',
+        stripe_invoice_id: null, // Checkout payments don't have a Stripe Invoice
+      })
+      .select()
+      .single();
+
+    if (invoiceError) {
+      console.error('Failed to create invoice for order:', invoiceError);
+      return;
+    }
+
+    // Create payment record
+    const { error: paymentError } = await supabase
+      .from('payments')
+      .insert({
+        organization_id: orgId,
+        order_id: orderId,
+        invoice_id: invoice.id,
+        amount_cents: totalCents,
+        currency: 'usd',
+        status: 'succeeded',
+        stripe_payment_intent_id: paymentIntent?.id || null,
+        stripe_charge_id: charge?.id || null,
+        receipt_url: charge?.receipt_url || null,
+        processed_at: new Date().toISOString(),
+      });
+
+    if (paymentError) {
+      console.error('Failed to create payment record for order:', paymentError);
+    }
+
+    console.log(`Created invoice ${invoice.id} and payment for order ${orderId}`);
+  } catch (error) {
+    console.error('Error creating invoice/payment for order:', error);
+  }
 }
 
 /**
@@ -461,5 +544,107 @@ export async function cancelOrder(orderId: string): Promise<void> {
     .from('orders')
     .update({ status: 'canceled' })
     .eq('id', orderId);
+}
+
+/**
+ * Order line item for billing display
+ */
+export interface OrderLineItem {
+  type: 'domain' | 'mailbox';
+  description: string;
+  domain?: string;
+  provider?: 'google' | 'microsoft';
+  quantity: number;
+  unit_price_cents: number;
+  total_cents: number;
+}
+
+/**
+ * Order with all line items for billing display
+ */
+export interface OrderWithLineItems extends Order {
+  line_items: OrderLineItem[];
+  invoice_id?: string;
+  payment_id?: string;
+  receipt_url?: string;
+}
+
+/**
+ * Get all orders for an organization with full line items
+ */
+export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
+  // Get all non-pending_payment orders
+  const { data: orders, error: ordersError } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('organization_id', orgId)
+    .neq('status', 'pending_payment')
+    .order('created_at', { ascending: false });
+
+  if (ordersError || !orders) {
+    return [];
+  }
+
+  // Get invoices for these orders
+  const orderIds = orders.map(o => o.id);
+  const { data: invoices } = await supabase
+    .from('invoices')
+    .select('*')
+    .in('order_id', orderIds);
+
+  // Get payments for these orders
+  const { data: payments } = await supabase
+    .from('payments')
+    .select('*')
+    .in('order_id', orderIds);
+
+  // Build order with line items
+  return orders.map(order => {
+    const cart = order.cart_snapshot as CartSnapshot;
+    const lineItems: OrderLineItem[] = [];
+
+    // Add each domain as a line item
+    for (const domain of cart.domains) {
+      const priceCents = Math.round(domain.price * 100);
+      lineItems.push({
+        type: 'domain',
+        description: `Domain: ${domain.domain}`,
+        domain: domain.domain,
+        quantity: 1,
+        unit_price_cents: priceCents,
+        total_cents: priceCents,
+      });
+
+      // Add mailboxes for this domain
+      if (domain.mailboxes.count > 0) {
+        const provider = domain.mailboxes.provider;
+        const unitPrice = provider === 'google' ? GOOGLE_MAILBOX_PRICE_CENTS : MICROSOFT_MAILBOX_PRICE_CENTS;
+        const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
+        
+        lineItems.push({
+          type: 'mailbox',
+          description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
+          domain: domain.domain,
+          provider: provider,
+          quantity: domain.mailboxes.count,
+          unit_price_cents: unitPrice,
+          total_cents: unitPrice * domain.mailboxes.count,
+        });
+      }
+    }
+
+    // Find associated invoice and payment
+    const invoice = invoices?.find(i => i.order_id === order.id);
+    const payment = payments?.find(p => p.order_id === order.id);
+
+    return {
+      ...order,
+      cart_snapshot: cart,
+      line_items: lineItems,
+      invoice_id: invoice?.id,
+      payment_id: payment?.id,
+      receipt_url: payment?.receipt_url || undefined,
+    } as OrderWithLineItems;
+  });
 }
 

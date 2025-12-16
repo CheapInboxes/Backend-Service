@@ -9,6 +9,7 @@ import {
   getPaymentMethods,
   removePaymentMethod,
 } from '../services/billingService.js';
+import { getOrders } from '../services/orderService.js';
 
 export async function billingRoutes(fastify: FastifyInstance) {
   // ==================== Usage ====================
@@ -96,6 +97,98 @@ export async function billingRoutes(fastify: FastifyInstance) {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'USAGE_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  // ==================== Orders ====================
+
+  /**
+   * List orders for an organization with full line items
+   */
+  fastify.get<{ Params: { orgId: string } }>(
+    '/orgs/:orgId/billing/orders',
+    {
+      preHandler: authMiddleware,
+      schema: {
+        description: 'List all completed orders for an organization with detailed line items.',
+        tags: ['billing'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['orgId'],
+          properties: {
+            orgId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              orders: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', format: 'uuid' },
+                    organization_id: { type: 'string', format: 'uuid' },
+                    status: { type: 'string' },
+                    created_at: { type: 'string' },
+                    invoice_id: { type: 'string', format: 'uuid', nullable: true },
+                    payment_id: { type: 'string', format: 'uuid', nullable: true },
+                    receipt_url: { type: 'string', nullable: true },
+                    line_items: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          type: { type: 'string', enum: ['domain', 'mailbox'] },
+                          description: { type: 'string' },
+                          domain: { type: 'string', nullable: true },
+                          provider: { type: 'string', enum: ['google', 'microsoft'], nullable: true },
+                          quantity: { type: 'number' },
+                          unit_price_cents: { type: 'number' },
+                          total_cents: { type: 'number' },
+                        },
+                      },
+                    },
+                    cart_snapshot: {
+                      type: 'object',
+                      properties: {
+                        totals: {
+                          type: 'object',
+                          properties: {
+                            domainTotal: { type: 'number' },
+                            mailboxMonthly: { type: 'number' },
+                            totalGoogleMailboxes: { type: 'number' },
+                            totalMicrosoftMailboxes: { type: 'number' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!request.user) {
+        return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'User not authenticated' } });
+      }
+
+      const { orgId } = request.params;
+
+      try {
+        const orders = await getOrders(orgId);
+        return { orders };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'ORDERS_FETCH_FAILED', message } });
       }
     }
   );
