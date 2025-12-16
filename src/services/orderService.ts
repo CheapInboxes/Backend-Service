@@ -149,13 +149,19 @@ export async function createCheckoutSession(
     });
   }
 
+  // Build return URL with order_id so we can go directly to configure page
+  // Replace placeholder if present, otherwise append order_id
+  const finalReturnUrl = returnUrl.includes('ORDER_ID_PLACEHOLDER')
+    ? returnUrl.replace('ORDER_ID_PLACEHOLDER', order.id)
+    : `${returnUrl}?order_id=${order.id}`;
+
   // Create embedded checkout session with card saved for future use
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
     ui_mode: 'embedded',
     line_items: lineItems,
-    return_url: `${returnUrl}?session_id={CHECKOUT_SESSION_ID}`,
+    return_url: `${finalReturnUrl}&session_id={CHECKOUT_SESSION_ID}`,
     // Save card for future billing
     payment_intent_data: {
       setup_future_usage: 'off_session',
