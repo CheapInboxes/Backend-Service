@@ -18,7 +18,7 @@ class SmartleadClient implements SendingPlatformClient {
     }
   }
 
-  async addMailbox(apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
+  async addMailbox(_apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
     console.log(`[Smartlead] Adding mailbox: ${mailbox.email}`);
     await delay(100 + Math.random() * 200);
 
@@ -31,8 +31,8 @@ class SmartleadClient implements SendingPlatformClient {
     return { externalId };
   }
 
-  async removeMailbox(apiKey: string, externalId: string): Promise<void> {
-    console.log(`[Smartlead] Removing mailbox: ${externalId}`);
+  async removeMailbox(_apiKey: string, _externalId: string): Promise<void> {
+    console.log(`[Smartlead] Removing mailbox: ${_externalId}`);
     await delay(100 + Math.random() * 200);
     
     // In production: DELETE to email-accounts endpoint
@@ -47,7 +47,7 @@ class SmartleadClient implements SendingPlatformClient {
         throw new Error(`Smartlead API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as any[];
       
       // Map Smartlead response to our MailboxData format
       return (data || []).map((account: any) => ({

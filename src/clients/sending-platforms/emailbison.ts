@@ -24,7 +24,7 @@ class EmailBisonClient implements SendingPlatformClient {
     }
   }
 
-  async addMailbox(apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
+  async addMailbox(_apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
     console.log(`[EmailBison] Adding mailbox: ${mailbox.email}`);
     await delay(100 + Math.random() * 200);
 
@@ -34,8 +34,8 @@ class EmailBisonClient implements SendingPlatformClient {
     return { externalId };
   }
 
-  async removeMailbox(apiKey: string, externalId: string): Promise<void> {
-    console.log(`[EmailBison] Removing mailbox: ${externalId}`);
+  async removeMailbox(_apiKey: string, _externalId: string): Promise<void> {
+    console.log(`[EmailBison] Removing mailbox: ${_externalId}`);
     await delay(100 + Math.random() * 200);
   }
 
@@ -52,7 +52,7 @@ class EmailBisonClient implements SendingPlatformClient {
         throw new Error(`EmailBison API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { accounts?: any[] };
       
       return (data.accounts || []).map((account: any) => ({
         email: account.email,
