@@ -35,7 +35,24 @@ const start = async () => {
   try {
     // Register CORS
     await fastify.register(fastifyCors, {
-      origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'], // Allow frontend origins (customer app on 3000, admin app on 3002)
+      origin: (origin, cb) => {
+        // Allow localhost for development
+        const allowedOrigins = [
+          'http://localhost:3000',
+          'http://localhost:3001', 
+          'http://localhost:3002',
+        ];
+        
+        // Allow any Vercel preview/production URLs
+        if (!origin || 
+            allowedOrigins.includes(origin) ||
+            origin.endsWith('.vercel.app') ||
+            origin.endsWith('.cheapinboxes.com')) {
+          cb(null, true);
+        } else {
+          cb(null, false);
+        }
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
