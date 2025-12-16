@@ -28,3 +28,6 @@ export async function checkAvailability(domain: string): Promise<{ available: bo
 
 
 
+
+
+
