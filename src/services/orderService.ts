@@ -179,12 +179,14 @@ export async function createCheckoutSession(
     : `${returnUrl}?order_id=${order.id}`;
 
   // Create embedded checkout session with card saved for future use
+  // Use ? or & for session_id depending on whether URL already has query params
+  const separator = finalReturnUrl.includes('?') ? '&' : '?';
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
     ui_mode: 'embedded',
     line_items: lineItems,
-    return_url: `${finalReturnUrl}&session_id={CHECKOUT_SESSION_ID}`,
+    return_url: `${finalReturnUrl}${separator}session_id={CHECKOUT_SESSION_ID}`,
     // Save card for future billing
     payment_intent_data: {
       setup_future_usage: 'off_session',
