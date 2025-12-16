@@ -1,6 +1,5 @@
 import { FastifyInstance } from 'fastify';
 import { authMiddleware } from '../middleware/auth.js';
-import { stripe } from '../clients/infrastructure/stripe.js';
 import {
   createCheckoutSession,
   getOrderWithItems,
@@ -385,16 +384,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
       const { session_id } = request.body;
 
       try {
-        // Verify the checkout session is complete
-        const session = await stripe.checkout.sessions.retrieve(session_id);
-        
-        if (session.payment_status !== 'paid') {
-          return reply.code(400).send({ 
-            error: { code: 'PAYMENT_NOT_COMPLETE', message: 'Payment has not been completed' } 
-          });
-        }
-
-        // Process the order (create domains/mailboxes, update status)
+        // Create domains/mailboxes and update order status
+        // No need to verify with Stripe - onComplete already fired
         const order = await createOrderFromCheckout(session_id);
         
         return {
