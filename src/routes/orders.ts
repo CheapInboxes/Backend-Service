@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { authMiddleware } from '../middleware/auth.js';
+import { stripe } from '../clients/infrastructure/stripe.js';
 import {
   createCheckoutSession,
   getOrderWithItems,
   getPendingConfigOrder,
   getOrderByCheckoutSession,
   completeOrder,
+  createOrderFromCheckout,
   type CartSnapshot,
   type MailboxConfig,
 } from '../services/orderService.js';
@@ -326,6 +328,83 @@ export async function orderRoutes(fastify: FastifyInstance) {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'ORDER_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  /**
+   * Process a completed checkout session (alternative to webhook)
+   * Called by frontend after embedded checkout completes
+   */
+  fastify.post<{ Params: { orgId: string }; Body: { session_id: string } }>(
+    '/orgs/:orgId/orders/process-payment',
+    {
+      preHandler: authMiddleware,
+      schema: {
+        description: 'Process a completed checkout session to create domains and mailboxes.',
+        tags: ['orders'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['orgId'],
+          properties: {
+            orgId: { type: 'string', format: 'uuid' },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['session_id'],
+          properties: {
+            session_id: { type: 'string' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              order: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  status: { type: 'string' },
+                },
+              },
+              message: { type: 'string' },
+            },
+          },
+          400: { $ref: 'ApiError' },
+          401: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!request.user) {
+        return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'User not authenticated' } });
+      }
+
+      const { session_id } = request.body;
+
+      try {
+        // Verify the checkout session is complete
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        
+        if (session.payment_status !== 'paid') {
+          return reply.code(400).send({ 
+            error: { code: 'PAYMENT_NOT_COMPLETE', message: 'Payment has not been completed' } 
+          });
+        }
+
+        // Process the order (create domains/mailboxes, update status)
+        const order = await createOrderFromCheckout(session_id);
+        
+        return {
+          order: { id: order.id, status: order.status },
+          message: 'Payment processed successfully. Ready for configuration.',
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Process payment error:', message);
+        return reply.code(400).send({ error: { code: 'PROCESS_FAILED', message } });
       }
     }
   );
