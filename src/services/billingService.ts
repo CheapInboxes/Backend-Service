@@ -243,6 +243,105 @@ export async function getPricebookItemByCode(code: string): Promise<PricebookIte
   return data as PricebookItem;
 }
 
+export interface MailboxPricingTier {
+  minQty: number;
+  maxQty: number | null;
+  priceCents: number;
+  priceFormatted: string;
+}
+
+export interface MailboxPricing {
+  basePriceCents: number;
+  tiers: MailboxPricingTier[];
+}
+
+/**
+ * Get mailbox pricing tiers from the database
+ * Returns the base price and volume discount tiers
+ */
+export async function getMailboxPricingTiers(): Promise<MailboxPricing> {
+  // Get base price from pricebook (use Google as canonical, both are same)
+  const { data: pricebookItem } = await supabase
+    .from('pricebook_items')
+    .select('base_unit_price_cents')
+    .eq('code', 'mailbox_monthly_google')
+    .single();
+
+  const basePriceCents = pricebookItem?.base_unit_price_cents || 350;
+
+  // Get mailbox pricing rules with their conditions
+  // These are the override_price rules for mailbox volume discounts
+  const { data: rules } = await supabase
+    .from('pricing_rules')
+    .select(`
+      id,
+      name,
+      value,
+      priority,
+      pricing_rule_conditions (
+        condition_type,
+        operator,
+        value
+      )
+    `)
+    .eq('rule_type', 'override_price')
+    .eq('scope_type', 'global')
+    .lte('active_from', new Date().toISOString())
+    .or('active_to.is.null,active_to.gt.' + new Date().toISOString())
+    .order('priority', { ascending: true });
+
+  // Build tiers from rules
+  const tiers: MailboxPricingTier[] = [];
+
+  // Add base tier (0-99 at base price)
+  tiers.push({
+    minQty: 0,
+    maxQty: 99,
+    priceCents: basePriceCents,
+    priceFormatted: `$${(basePriceCents / 100).toFixed(2)}`,
+  });
+
+  if (rules && rules.length > 0) {
+    for (const rule of rules) {
+      const conditions = rule.pricing_rule_conditions || [];
+      
+      // Check if this rule applies to mailboxes
+      const pricebookCondition = conditions.find(
+        (c: any) => c.condition_type === 'pricebook_item'
+      );
+      
+      // Get min/max quantity from conditions
+      const minCondition = conditions.find(
+        (c: any) => c.condition_type === 'min_quantity' && c.operator === 'gte'
+      );
+      const maxCondition = conditions.find(
+        (c: any) => c.condition_type === 'min_quantity' && c.operator === 'lte'
+      );
+
+      if (minCondition) {
+        const minQty = minCondition.value?.value || 0;
+        const maxQty = maxCondition?.value?.value || null;
+        const priceCents = rule.value;
+
+        tiers.push({
+          minQty,
+          maxQty,
+          priceCents,
+          priceFormatted: `$${(priceCents / 100).toFixed(2)}`,
+        });
+      }
+    }
+  }
+
+  // Sort by minQty ascending
+  tiers.sort((a, b) => a.minQty - b.minQty);
+
+  return {
+    basePriceCents,
+    tiers,
+  };
+}
+
 /**
  * Create a pricebook item
  */

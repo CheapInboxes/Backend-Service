@@ -8,10 +8,56 @@ import {
   createCheckoutSession,
   getPaymentMethods,
   removePaymentMethod,
+  getMailboxPricingTiers,
 } from '../services/billingService.js';
 import { getOrders } from '../services/orderService.js';
 
 export async function billingRoutes(fastify: FastifyInstance) {
+  // ==================== Public Pricing ====================
+
+  /**
+   * Get mailbox pricing tiers (public - no auth required)
+   * Used by frontend to display correct prices in cart
+   */
+  fastify.get(
+    '/pricing/mailboxes',
+    {
+      schema: {
+        description: 'Get mailbox pricing tiers including volume discounts. No authentication required.',
+        tags: ['pricing'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              basePriceCents: { type: 'number', description: 'Base price per mailbox in cents' },
+              tiers: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    minQty: { type: 'number', description: 'Minimum quantity for this tier' },
+                    maxQty: { type: ['number', 'null'], description: 'Maximum quantity for this tier (null = unlimited)' },
+                    priceCents: { type: 'number', description: 'Price per mailbox in cents' },
+                    priceFormatted: { type: 'string', description: 'Formatted price string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (_request, reply) => {
+      try {
+        const pricing = await getMailboxPricingTiers();
+        return pricing;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(500).send({ error: { code: 'PRICING_FETCH_FAILED', message } });
+      }
+    }
+  );
+
   // ==================== Usage ====================
 
   /**
