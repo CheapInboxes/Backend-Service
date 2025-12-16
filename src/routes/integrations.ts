@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { validateMembership } from '../services/orgService.js';
 import { supabase as supabaseAdmin } from '../clients/infrastructure/supabase.js';
 import { getSendingPlatformClient } from '../clients/sending-platforms/index.js';
+import { encryptCredentials, decryptCredentials, IntegrationCredentials } from '../utils/encryption.js';
 
 // Types
 type SendingPlatform = 'instantly' | 'smartlead' | 'emailbison' | 'plusvibe';
@@ -105,7 +106,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
   // Create integration
   fastify.post<{
     Params: { orgId: string };
-    Body: { provider: SendingPlatform; api_key: string };
+    Body: { provider: SendingPlatform; api_key: string; base_url?: string };
   }>(
     '/orgs/:orgId/integrations',
     {
@@ -128,6 +129,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           properties: {
             provider: { type: 'string', enum: VALID_SENDING_PLATFORMS },
             api_key: { type: 'string', minLength: 1 },
+            base_url: { type: 'string' },
           },
         },
         response: {
@@ -163,12 +165,20 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       const { orgId } = request.params;
-      const { provider, api_key } = request.body;
+      const { provider, api_key, base_url } = request.body;
 
       const isMember = await validateMembership(orgId, request.user.id);
       if (!isMember) {
         reply.code(403).send({
           error: { code: 'FORBIDDEN', message: 'You are not a member of this organization' },
+        });
+        return;
+      }
+
+      // EmailBison requires a base_url
+      if (provider === 'emailbison' && !base_url) {
+        reply.code(400).send({
+          error: { code: 'MISSING_BASE_URL', message: 'EmailBison requires a base URL' },
         });
         return;
       }
@@ -195,7 +205,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       // Validate API key with the platform
       try {
         const client = getSendingPlatformClient(provider);
-        const isValid = await client.validateApiKey(api_key);
+        const isValid = await client.validateApiKey(api_key, base_url);
         if (!isValid) {
           reply.code(400).send({
             error: { code: 'INVALID_API_KEY', message: `Invalid API key for ${provider}` },
@@ -212,14 +222,20 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         return;
       }
 
-      // Store the integration (in production, encrypt api_key before storing)
+      // Encrypt credentials before storing
+      const credentials: IntegrationCredentials = {
+        api_key,
+        ...(base_url && { base_url }),
+      };
+      const encryptedCredentials = encryptCredentials(credentials);
+
       const { data: integration, error } = await supabaseAdmin
         .from('integrations')
         .insert({
           organization_id: orgId,
           type: 'sending',
           provider,
-          credential_ref: api_key, // TODO: Encrypt this in production
+          credential_ref: encryptedCredentials,
           status: 'active',
         })
         .select('id, organization_id, type, provider, status, created_at')
@@ -239,7 +255,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
   // Update integration
   fastify.patch<{
     Params: { orgId: string; integrationId: string };
-    Body: { api_key?: string; status?: 'active' | 'disabled' };
+    Body: { api_key?: string; base_url?: string; status?: 'active' | 'disabled' };
   }>(
     '/orgs/:orgId/integrations/:integrationId',
     {
@@ -261,6 +277,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           type: 'object',
           properties: {
             api_key: { type: 'string', minLength: 1 },
+            base_url: { type: 'string' },
             status: { type: 'string', enum: ['active', 'disabled'] },
           },
         },
@@ -297,7 +314,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       const { orgId, integrationId } = request.params;
-      const { api_key, status } = request.body;
+      const { api_key, base_url, status } = request.body;
 
       const isMember = await validateMembership(orgId, request.user.id);
       if (!isMember) {
@@ -324,19 +341,30 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
       const updates: Record<string, any> = {};
 
-      // If updating API key, validate it first
-      if (api_key) {
+      // Decrypt existing credentials
+      let existingCredentials: IntegrationCredentials;
+      try {
+        existingCredentials = decryptCredentials(existing.credential_ref);
+      } catch {
+        // If decryption fails, credentials might be in old plain-text format
+        existingCredentials = { api_key: existing.credential_ref, base_url: existing.base_url };
+      }
+
+      // If updating API key or base_url, validate and re-encrypt
+      if (api_key || base_url) {
+        const newApiKey = api_key || existingCredentials.api_key;
+        const newBaseUrl = base_url || existingCredentials.base_url;
+
+        // Validate the new API key
         try {
           const client = getSendingPlatformClient(existing.provider as SendingPlatform);
-          const isValid = await client.validateApiKey(api_key);
+          const isValid = await client.validateApiKey(newApiKey, newBaseUrl);
           if (!isValid) {
             reply.code(400).send({
               error: { code: 'INVALID_API_KEY', message: `Invalid API key for ${existing.provider}` },
             });
             return;
           }
-          updates.credential_ref = api_key;
-          updates.status = 'active'; // Reactivate if key was invalid before
         } catch (err) {
           reply.code(400).send({
             error: {
@@ -346,6 +374,14 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           });
           return;
         }
+
+        // Encrypt updated credentials
+        const newCredentials: IntegrationCredentials = {
+          api_key: newApiKey,
+          ...(newBaseUrl && { base_url: newBaseUrl }),
+        };
+        updates.credential_ref = encryptCredentials(newCredentials);
+        updates.status = 'active'; // Reactivate if key was invalid before
       }
 
       if (status) {
@@ -566,9 +602,17 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         return { synced: 0, failed: 0, results: [] };
       }
 
+      // Decrypt credentials
+      let credentials: IntegrationCredentials;
+      try {
+        credentials = decryptCredentials(integration.credential_ref);
+      } catch {
+        // Fallback for old plain-text format
+        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
+      }
+
       // Sync each mailbox to the platform
       const client = getSendingPlatformClient(integration.provider as SendingPlatform);
-      const apiKey = integration.credential_ref;
       const results: Array<{
         mailbox_id: string;
         email: string;
@@ -592,11 +636,11 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         }
 
         try {
-          const { externalId } = await client.addMailbox(apiKey, {
+          const { externalId } = await client.addMailbox(credentials.api_key, {
             email: mailbox.full_email,
             firstName: mailbox.first_name || '',
             lastName: mailbox.last_name || '',
-          });
+          }, credentials.base_url);
 
           // Update mailbox with external ref
           const newExternalRefs = {
@@ -734,14 +778,22 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         return { success: true, external_id: existingRef };
       }
 
+      // Decrypt credentials
+      let credentials: IntegrationCredentials;
+      try {
+        credentials = decryptCredentials(integration.credential_ref);
+      } catch {
+        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
+      }
+
       // Sync to platform
       try {
         const client = getSendingPlatformClient(provider);
-        const { externalId } = await client.addMailbox(integration.credential_ref, {
+        const { externalId } = await client.addMailbox(credentials.api_key, {
           email: mailbox.full_email,
           firstName: mailbox.first_name || '',
           lastName: mailbox.last_name || '',
-        });
+        }, credentials.base_url);
 
         // Update mailbox with external ref
         const newExternalRefs = {
@@ -865,10 +917,18 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         return { success: true };
       }
 
+      // Decrypt credentials
+      let credentials: IntegrationCredentials;
+      try {
+        credentials = decryptCredentials(integration.credential_ref);
+      } catch {
+        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
+      }
+
       // Remove from platform
       try {
         const client = getSendingPlatformClient(provider);
-        await client.removeMailbox(integration.credential_ref, externalRef);
+        await client.removeMailbox(credentials.api_key, externalRef, credentials.base_url);
 
         // Remove external ref from mailbox
         const newExternalRefs = { ...mailbox.external_refs };

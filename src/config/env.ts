@@ -21,6 +21,8 @@ const envSchema = z.object({
   // Automation Service
   AUTOMATION_SERVICE_URL: z.string().url().default('http://localhost:3002'),
   AUTOMATION_SERVICE_API_KEY: z.string().min(32, 'AUTOMATION_SERVICE_API_KEY must be at least 32 characters'),
+  // Credentials Encryption
+  CREDENTIALS_ENCRYPTION_KEY: z.string().min(32, 'CREDENTIALS_ENCRYPTION_KEY must be at least 32 characters'),
 });
 
 type Env = z.infer<typeof envSchema>;

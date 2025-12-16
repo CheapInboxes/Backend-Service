@@ -8,7 +8,7 @@ const SMARTLEAD_API_BASE = 'https://server.smartlead.ai/api/v1';
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class SmartleadClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<boolean> {
     try {
       // Use a simple endpoint to validate the key
       const response = await fetch(`${SMARTLEAD_API_BASE}/email-accounts?api_key=${apiKey}&limit=1`);
@@ -18,7 +18,7 @@ class SmartleadClient implements SendingPlatformClient {
     }
   }
 
-  async addMailbox(_apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
+  async addMailbox(_apiKey: string, mailbox: MailboxData, _baseUrl?: string): Promise<{ externalId: string }> {
     console.log(`[Smartlead] Adding mailbox: ${mailbox.email}`);
     await delay(100 + Math.random() * 200);
 
@@ -31,7 +31,7 @@ class SmartleadClient implements SendingPlatformClient {
     return { externalId };
   }
 
-  async removeMailbox(_apiKey: string, _externalId: string): Promise<void> {
+  async removeMailbox(_apiKey: string, _externalId: string, _baseUrl?: string): Promise<void> {
     console.log(`[Smartlead] Removing mailbox: ${_externalId}`);
     await delay(100 + Math.random() * 200);
     
@@ -39,7 +39,7 @@ class SmartleadClient implements SendingPlatformClient {
     // DELETE https://server.smartlead.ai/api/v1/email-accounts/{id}
   }
 
-  async listMailboxes(apiKey: string): Promise<MailboxData[]> {
+  async listMailboxes(apiKey: string, _baseUrl?: string): Promise<MailboxData[]> {
     try {
       const response = await fetch(`${SMARTLEAD_API_BASE}/email-accounts?api_key=${apiKey}&limit=100`);
       

@@ -8,7 +8,7 @@ const INSTANTLY_API_BASE = 'https://api.instantly.ai/api/v2';
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class InstantlyClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<boolean> {
     try {
       // Use the accounts endpoint to validate the key (API V2 uses Bearer auth)
       const response = await fetch(`${INSTANTLY_API_BASE}/accounts?limit=1`, {
@@ -23,7 +23,7 @@ class InstantlyClient implements SendingPlatformClient {
     }
   }
 
-  async addMailbox(_apiKey: string, mailbox: MailboxData): Promise<{ externalId: string }> {
+  async addMailbox(_apiKey: string, mailbox: MailboxData, _baseUrl?: string): Promise<{ externalId: string }> {
     // Instantly uses email as the unique identifier
     // In production, you would call the accounts endpoint
     // For now, we'll mock this as Instantly requires SMTP credentials
@@ -40,7 +40,7 @@ class InstantlyClient implements SendingPlatformClient {
     return { externalId };
   }
 
-  async removeMailbox(_apiKey: string, _externalId: string): Promise<void> {
+  async removeMailbox(_apiKey: string, _externalId: string, _baseUrl?: string): Promise<void> {
     console.log(`[Instantly] Removing mailbox: ${_externalId}`);
     await delay(100 + Math.random() * 200);
     
@@ -48,7 +48,7 @@ class InstantlyClient implements SendingPlatformClient {
     // DELETE https://api.instantly.ai/api/v2/accounts/{id}
   }
 
-  async listMailboxes(apiKey: string): Promise<MailboxData[]> {
+  async listMailboxes(apiKey: string, _baseUrl?: string): Promise<MailboxData[]> {
     try {
       const response = await fetch(`${INSTANTLY_API_BASE}/accounts?limit=100`, {
         headers: {
