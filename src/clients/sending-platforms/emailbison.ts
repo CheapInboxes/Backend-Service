@@ -5,12 +5,25 @@ import { SendingPlatformClient, MailboxData } from './interface.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Build the API URL from user's base URL (e.g., https://yourinstance.emailbison.com -> https://yourinstance.emailbison.com/api)
+// Build the API URL from user's base URL
+// Handles various inputs: inbox.coldmessage.io, inbox.coldmessage.io/, inbox.coldmessage.io/whatever, https://inbox.coldmessage.io/api
 function getApiUrl(baseUrl: string): string {
-  // Remove trailing slash if present
-  const cleanUrl = baseUrl.replace(/\/$/, '');
-  // Append /api if not already present
-  return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  let cleanUrl = baseUrl.trim();
+  
+  // Add https:// if no protocol specified
+  if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+    cleanUrl = `https://${cleanUrl}`;
+  }
+  
+  // Parse as URL to extract just the origin (protocol + host)
+  try {
+    const parsed = new URL(cleanUrl);
+    return `${parsed.origin}/api`;
+  } catch {
+    // Fallback: just strip paths and trailing slashes manually
+    cleanUrl = cleanUrl.replace(/\/+$/, '').replace(/\/.*$/, '');
+    return `${cleanUrl}/api`;
+  }
 }
 
 class EmailBisonClient implements SendingPlatformClient {
