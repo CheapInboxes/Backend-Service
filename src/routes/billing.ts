@@ -9,6 +9,7 @@ import {
   getPaymentMethods,
   removePaymentMethod,
   getMailboxPricingTiers,
+  getBillingSummary,
 } from '../services/billingService.js';
 import { getOrders } from '../services/orderService.js';
 
@@ -54,6 +55,91 @@ export async function billingRoutes(fastify: FastifyInstance) {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(500).send({ error: { code: 'PRICING_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  // ==================== Billing Summary ====================
+
+  /**
+   * Get billing summary for an organization
+   * Shows subscriptions, upcoming charges, and next payment
+   */
+  fastify.get<{ Params: { orgId: string } }>(
+    '/orgs/:orgId/billing/summary',
+    {
+      preHandler: authMiddleware,
+      schema: {
+        description: 'Get billing summary including subscriptions, upcoming charges, and next payment.',
+        tags: ['billing'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['orgId'],
+          properties: {
+            orgId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              activeSubscriptions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    domainName: { type: 'string' },
+                    itemCount: { type: 'number' },
+                    monthlyAmountCents: { type: 'number' },
+                    nextBillingDate: { type: 'string' },
+                  },
+                },
+              },
+              upcomingCharges: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    date: { type: 'string' },
+                    type: { type: 'string', enum: ['subscription', 'domain_renewal'] },
+                    description: { type: 'string' },
+                    amountCents: { type: 'number' },
+                    subscriptionId: { type: 'string', nullable: true },
+                    domainId: { type: 'string', nullable: true },
+                  },
+                },
+              },
+              totalMonthlyRecurring: { type: 'number' },
+              nextPayment: {
+                type: ['object', 'null'],
+                properties: {
+                  amountCents: { type: 'number' },
+                  date: { type: 'string' },
+                  description: { type: 'string' },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          400: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!request.user) {
+        return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'User not authenticated' } });
+      }
+
+      const { orgId } = request.params;
+
+      try {
+        const summary = await getBillingSummary(orgId);
+        return summary;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'BILLING_SUMMARY_FAILED', message } });
       }
     }
   );
