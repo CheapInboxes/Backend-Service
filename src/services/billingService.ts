@@ -305,11 +305,6 @@ export async function getMailboxPricingTiers(): Promise<MailboxPricing> {
     for (const rule of rules) {
       const conditions = rule.pricing_rule_conditions || [];
       
-      // Check if this rule applies to mailboxes
-      const pricebookCondition = conditions.find(
-        (c: any) => c.condition_type === 'pricebook_item'
-      );
-      
       // Get min/max quantity from conditions
       const minCondition = conditions.find(
         (c: any) => c.condition_type === 'min_quantity' && c.operator === 'gte'
