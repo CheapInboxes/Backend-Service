@@ -15,20 +15,20 @@ export async function orderRoutes(fastify: FastifyInstance) {
 
   /**
    * Create a Stripe Checkout session for purchasing domains and mailboxes
+   * Returns client_secret for embedded checkout
    */
   fastify.post<{
     Params: { orgId: string };
     Body: {
       cart: CartSnapshot;
-      success_url: string;
-      cancel_url: string;
+      return_url: string;
     };
   }>(
     '/orgs/:orgId/orders/checkout',
     {
       preHandler: authMiddleware,
       schema: {
-        description: 'Create a Stripe Checkout session for purchasing domains and mailboxes.',
+        description: 'Create a Stripe Checkout session for embedded checkout. Returns client_secret.',
         tags: ['orders'],
         security: [{ bearerAuth: [] }],
         params: {
@@ -40,7 +40,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         },
         body: {
           type: 'object',
-          required: ['cart', 'success_url', 'cancel_url'],
+          required: ['cart', 'return_url'],
           properties: {
             cart: {
               type: 'object',
@@ -76,8 +76,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
                 },
               },
             },
-            success_url: { type: 'string', format: 'uri' },
-            cancel_url: { type: 'string', format: 'uri' },
+            return_url: { type: 'string', format: 'uri' },
           },
         },
         response: {
@@ -85,7 +84,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
             type: 'object',
             properties: {
               session_id: { type: 'string' },
-              url: { type: 'string' },
+              client_secret: { type: 'string' },
               order_id: { type: 'string' },
             },
           },
@@ -100,7 +99,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       }
 
       const { orgId } = request.params;
-      const { cart, success_url, cancel_url } = request.body;
+      const { cart, return_url } = request.body;
 
       // Validate cart has items
       if (!cart.domains || cart.domains.length === 0) {
@@ -108,13 +107,12 @@ export async function orderRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const { sessionId, url, orderId } = await createCheckoutSession(
+        const { sessionId, clientSecret, orderId } = await createCheckoutSession(
           orgId,
           cart,
-          success_url,
-          cancel_url
+          return_url
         );
-        return { session_id: sessionId, url, order_id: orderId };
+        return { session_id: sessionId, client_secret: clientSecret, order_id: orderId };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'CHECKOUT_FAILED', message } });

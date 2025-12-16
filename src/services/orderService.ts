@@ -73,13 +73,14 @@ const MICROSOFT_MAILBOX_PRICE_CENTS = 325; // $3.25/mo
 
 /**
  * Create a Stripe Checkout session for purchasing domains and mailboxes
+ * Uses payment mode (one-time) with card saved for future billing via API
+ * Returns client_secret for embedded checkout
  */
 export async function createCheckoutSession(
   orgId: string,
   cart: CartSnapshot,
-  successUrl: string,
-  cancelUrl: string
-): Promise<{ sessionId: string; url: string; orderId: string }> {
+  returnUrl: string
+): Promise<{ sessionId: string; clientSecret: string; orderId: string }> {
   // Ensure org has Stripe customer
   const customerId = await ensureStripeCustomer(orgId);
 
@@ -98,10 +99,10 @@ export async function createCheckoutSession(
     throw new Error(`Failed to create order: ${orderError?.message}`);
   }
 
-  // Build line items
+  // Build line items - everything is one-time payment
   const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
-  // Add domain line items (one-time purchases)
+  // Add domain line items
   for (const domain of cart.domains) {
     lineItems.push({
       price_data: {
@@ -116,85 +117,54 @@ export async function createCheckoutSession(
     });
   }
 
-  // Calculate total mailboxes by provider
+  // Add mailbox line items (first month payment)
   const totalGoogle = cart.totals.totalGoogleMailboxes;
   const totalMicrosoft = cart.totals.totalMicrosoftMailboxes;
 
-  // Determine checkout mode - if we have mailboxes, use subscription mode
-  const hasMailboxes = totalGoogle > 0 || totalMicrosoft > 0;
-
-  let session: Stripe.Checkout.Session;
-
-  if (hasMailboxes) {
-    // For subscriptions, we need to create prices differently
-    // Add Google mailboxes as recurring
-    if (totalGoogle > 0) {
-      lineItems.push({
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: 'Google Workspace Mailbox',
-            description: 'Monthly Google Workspace mailbox subscription',
-          },
-          unit_amount: GOOGLE_MAILBOX_PRICE_CENTS,
-          recurring: {
-            interval: 'month',
-          },
+  if (totalGoogle > 0) {
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: 'Google Workspace Mailbox (First Month)',
+          description: `${totalGoogle} mailbox${totalGoogle > 1 ? 'es' : ''} @ $3.50/mo each`,
         },
-        quantity: totalGoogle,
-      });
-    }
-
-    // Add Microsoft mailboxes as recurring
-    if (totalMicrosoft > 0) {
-      lineItems.push({
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: 'Microsoft 365 Mailbox',
-            description: 'Monthly Microsoft 365 mailbox subscription',
-          },
-          unit_amount: MICROSOFT_MAILBOX_PRICE_CENTS,
-          recurring: {
-            interval: 'month',
-          },
-        },
-        quantity: totalMicrosoft,
-      });
-    }
-
-    // Create session with subscription mode
-    session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      mode: 'subscription',
-      line_items: lineItems,
-      success_url: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: cancelUrl,
-      metadata: {
-        order_id: order.id,
-        organization_id: orgId,
+        unit_amount: GOOGLE_MAILBOX_PRICE_CENTS,
       },
-      subscription_data: {
-        metadata: {
-          order_id: order.id,
-          organization_id: orgId,
-        },
-      },
-    });
-  } else {
-    // No mailboxes - just domains (one-time payment)
-    session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      mode: 'payment',
-      line_items: lineItems,
-      success_url: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: cancelUrl,
-      metadata: {
-        order_id: order.id,
-        organization_id: orgId,
-      },
+      quantity: totalGoogle,
     });
   }
+
+  if (totalMicrosoft > 0) {
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: 'Microsoft 365 Mailbox (First Month)',
+          description: `${totalMicrosoft} mailbox${totalMicrosoft > 1 ? 'es' : ''} @ $3.25/mo each`,
+        },
+        unit_amount: MICROSOFT_MAILBOX_PRICE_CENTS,
+      },
+      quantity: totalMicrosoft,
+    });
+  }
+
+  // Create embedded checkout session with card saved for future use
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    mode: 'payment',
+    ui_mode: 'embedded',
+    line_items: lineItems,
+    return_url: `${returnUrl}?session_id={CHECKOUT_SESSION_ID}`,
+    // Save card for future billing
+    payment_intent_data: {
+      setup_future_usage: 'off_session',
+    },
+    metadata: {
+      order_id: order.id,
+      organization_id: orgId,
+    },
+  });
 
   // Update order with checkout session ID
   await supabase
@@ -204,7 +174,7 @@ export async function createCheckoutSession(
 
   return {
     sessionId: session.id,
-    url: session.url || '',
+    clientSecret: session.client_secret || '',
     orderId: order.id,
   };
 }
