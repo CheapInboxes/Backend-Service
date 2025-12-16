@@ -67,9 +67,70 @@ export interface MailboxConfig {
   profile_picture_url?: string;
 }
 
-// Pricing constants (in cents)
-const GOOGLE_MAILBOX_PRICE_CENTS = 350; // $3.50/mo
-const MICROSOFT_MAILBOX_PRICE_CENTS = 325; // $3.25/mo
+// Mailbox pricing codes
+const MAILBOX_PRICEBOOK_CODES = {
+  google: 'mailbox_monthly_google',
+  microsoft: 'mailbox_monthly_microsoft',
+} as const;
+
+// Volume pricing tiers (in cents)
+// 0-99: $3.50, 100-249: $3.25, 250-999: $3.00, 1000+: $2.80
+const VOLUME_PRICING_TIERS = [
+  { minQty: 1000, price: 280 },
+  { minQty: 250, price: 300 },
+  { minQty: 100, price: 325 },
+  { minQty: 0, price: 350 },
+] as const;
+
+/**
+ * Get mailbox price based on total quantity (volume pricing)
+ */
+function getMailboxPriceForQuantity(totalQuantity: number): number {
+  for (const tier of VOLUME_PRICING_TIERS) {
+    if (totalQuantity >= tier.minQty) {
+      return tier.price;
+    }
+  }
+  return 350; // Default base price
+}
+
+/**
+ * Get mailbox price from pricebook with volume pricing
+ */
+async function getMailboxPrice(
+  provider: 'google' | 'microsoft',
+  totalMailboxCount: number = 1
+): Promise<{ priceCents: number; pricebookItemId: string | null }> {
+  const code = MAILBOX_PRICEBOOK_CODES[provider];
+  
+  const { data: item } = await supabase
+    .from('pricebook_items')
+    .select('id, base_unit_price_cents')
+    .eq('code', code)
+    .single();
+
+  // Apply volume pricing
+  const priceCents = getMailboxPriceForQuantity(totalMailboxCount);
+
+  return { 
+    priceCents, 
+    pricebookItemId: item?.id || null 
+  };
+}
+
+/**
+ * Count total mailboxes for an organization (existing + in cart)
+ */
+async function getTotalMailboxCount(orgId: string, cartMailboxCount: number): Promise<number> {
+  const { count, error } = await supabase
+    .from('mailboxes')
+    .select('*', { count: 'exact', head: true })
+    .eq('organization_id', orgId)
+    .in('status', ['active', 'pending', 'provisioning']);
+
+  const existingCount = error ? 0 : (count || 0);
+  return existingCount + cartMailboxCount;
+}
 
 /**
  * Create a Stripe Checkout session for purchasing domains and mailboxes
@@ -140,9 +201,15 @@ export async function createCheckoutSession(
     });
   }
 
-  // Add mailbox line items (first month payment)
+  // Add mailbox line items (first month payment) with volume pricing
   const totalGoogle = cart.totals.totalGoogleMailboxes;
   const totalMicrosoft = cart.totals.totalMicrosoftMailboxes;
+  const totalMailboxesInCart = totalGoogle + totalMicrosoft;
+  
+  // Get total mailbox count including existing mailboxes for volume pricing
+  const totalMailboxCount = await getTotalMailboxCount(orgId, totalMailboxesInCart);
+  const volumePrice = getMailboxPriceForQuantity(totalMailboxCount);
+  const priceFormatted = (volumePrice / 100).toFixed(2);
 
   if (totalGoogle > 0) {
     lineItems.push({
@@ -150,9 +217,9 @@ export async function createCheckoutSession(
         currency: 'usd',
         product_data: {
           name: 'Google Workspace Mailbox (First Month)',
-          description: `${totalGoogle} mailbox${totalGoogle > 1 ? 'es' : ''} @ $3.50/mo each`,
+          description: `${totalGoogle} mailbox${totalGoogle > 1 ? 'es' : ''} @ $${priceFormatted}/mo each`,
         },
-        unit_amount: GOOGLE_MAILBOX_PRICE_CENTS,
+        unit_amount: volumePrice,
       },
       quantity: totalGoogle,
     });
@@ -164,9 +231,9 @@ export async function createCheckoutSession(
         currency: 'usd',
         product_data: {
           name: 'Microsoft 365 Mailbox (First Month)',
-          description: `${totalMicrosoft} mailbox${totalMicrosoft > 1 ? 'es' : ''} @ $3.25/mo each`,
+          description: `${totalMicrosoft} mailbox${totalMicrosoft > 1 ? 'es' : ''} @ $${priceFormatted}/mo each`,
         },
-        unit_amount: MICROSOFT_MAILBOX_PRICE_CENTS,
+        unit_amount: volumePrice,
       },
       quantity: totalMicrosoft,
     });
@@ -294,6 +361,11 @@ export async function createOrderFromCheckout(
   // Create invoice and payment records for the order
   await createOrderInvoiceAndPayment(order.id, order.organization_id, cart, checkoutSessionId);
 
+  // Create subscriptions for recurring mailbox billing
+  if (createdDomains && createdDomains.length > 0) {
+    await createSubscriptionsFromOrder(order.id, order.organization_id, cart, createdDomains);
+  }
+
   // Update order status to pending_config (ready for wizard)
   const { data: updatedOrder, error: updateError } = await supabase
     .from('orders')
@@ -339,6 +411,7 @@ async function createOrderInvoiceAndPayment(
       .insert({
         organization_id: orgId,
         order_id: orderId,
+        type: 'order',
         period_start: today.toISOString().split('T')[0],
         period_end: today.toISOString().split('T')[0],
         total_cents: totalCents,
@@ -351,6 +424,64 @@ async function createOrderInvoiceAndPayment(
     if (invoiceError) {
       console.error('Failed to create invoice for order:', invoiceError);
       return;
+    }
+
+    // Create invoice items for audit trail
+    const invoiceItems: any[] = [];
+    const todayStr = today.toISOString().split('T')[0];
+
+    // Calculate total mailbox count for volume pricing
+    const totalMailboxesInCart = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+    const totalMailboxCount = await getTotalMailboxCount(orgId, totalMailboxesInCart);
+    const volumeMailboxPrice = getMailboxPriceForQuantity(totalMailboxCount);
+
+    // Add domain line items
+    for (const domain of cart.domains) {
+      const priceCents = Math.round(domain.price * 100);
+      const tld = domain.tld || domain.domain.split('.').pop() || 'com';
+      
+      invoiceItems.push({
+        invoice_id: invoice.id,
+        organization_id: orgId,
+        code: `domain_registration_${tld}`,
+        description: `Domain: ${domain.domain} (1 year)`,
+        quantity: 1,
+        base_unit_price_cents: priceCents,
+        final_unit_price_cents: priceCents,
+        total_cents: priceCents,
+        period: todayStr,
+        related_ids: { domain: domain.domain },
+      });
+
+      // Add mailbox line item for this domain
+      if (domain.mailboxes.count > 0) {
+        const provider = domain.mailboxes.provider;
+        const code = MAILBOX_PRICEBOOK_CODES[provider];
+        const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
+
+        invoiceItems.push({
+          invoice_id: invoice.id,
+          organization_id: orgId,
+          code,
+          description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
+          quantity: domain.mailboxes.count,
+          base_unit_price_cents: 350, // Base price before volume discount
+          final_unit_price_cents: volumeMailboxPrice,
+          total_cents: volumeMailboxPrice * domain.mailboxes.count,
+          period: todayStr,
+          related_ids: { domain: domain.domain, provider },
+        });
+      }
+    }
+
+    if (invoiceItems.length > 0) {
+      const { error: itemsError } = await supabase
+        .from('invoice_items')
+        .insert(invoiceItems);
+
+      if (itemsError) {
+        console.error('Failed to create invoice items:', itemsError);
+      }
     }
 
     // Create payment record
@@ -376,6 +507,84 @@ async function createOrderInvoiceAndPayment(
     console.log(`Created invoice ${invoice.id} and payment for order ${orderId}`);
   } catch (error) {
     console.error('Error creating invoice/payment for order:', error);
+  }
+}
+
+/**
+ * Create subscriptions for recurring mailbox billing
+ * One subscription per domain with mailboxes
+ */
+async function createSubscriptionsFromOrder(
+  orderId: string,
+  orgId: string,
+  cart: CartSnapshot,
+  createdDomains: any[]
+): Promise<void> {
+  try {
+    const orderDate = new Date();
+    const billingAnchorDay = Math.min(orderDate.getDate(), 28);
+    
+    // Next billing is one month from order date
+    const nextBillingDate = new Date(orderDate);
+    nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+    nextBillingDate.setDate(billingAnchorDay);
+    const nextBillingDateStr = nextBillingDate.toISOString().split('T')[0];
+
+    // Calculate total mailbox count for volume pricing
+    const totalMailboxesInCart = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+    const totalMailboxCount = await getTotalMailboxCount(orgId, totalMailboxesInCart);
+
+    for (let i = 0; i < createdDomains.length; i++) {
+      const domain = createdDomains[i];
+      const cartDomain = cart.domains[i];
+      const mailboxCount = cartDomain.mailboxes.count;
+      const provider = cartDomain.mailboxes.provider;
+
+      // Skip if no mailboxes
+      if (mailboxCount === 0) continue;
+
+      // Get price with volume pricing
+      const { priceCents, pricebookItemId } = await getMailboxPrice(provider, totalMailboxCount);
+      const code = MAILBOX_PRICEBOOK_CODES[provider];
+
+      // Create subscription for this domain
+      const { data: subscription, error: subError } = await supabase
+        .from('subscriptions')
+        .insert({
+          organization_id: orgId,
+          order_id: orderId,
+          domain_id: domain.id,
+          status: 'active',
+          billing_anchor_day: billingAnchorDay,
+          next_billing_date: nextBillingDateStr,
+        })
+        .select()
+        .single();
+
+      if (subError || !subscription) {
+        console.error(`Failed to create subscription for domain ${domain.domain}:`, subError);
+        continue;
+      }
+
+      // Create subscription item
+      const { error: itemError } = await supabase
+        .from('subscription_items')
+        .insert({
+          subscription_id: subscription.id,
+          pricebook_item_id: pricebookItemId,
+          code,
+          quantity: mailboxCount,
+          unit_price_cents: priceCents,
+        });
+
+      if (itemError) {
+        console.error(`Failed to create subscription item for domain ${domain.domain}:`, itemError);
+      }
+
+      console.log(`Created subscription ${subscription.id} for ${domain.domain}: ${mailboxCount}x ${provider} mailboxes`);
+    }
+  } catch (error) {
+    console.error('Error creating subscriptions from order:', error);
   }
 }
 
@@ -603,6 +812,13 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     const cart = order.cart_snapshot as CartSnapshot;
     const lineItems: OrderLineItem[] = [];
 
+    // Calculate mailbox unit price from cart totals (historical price at time of purchase)
+    const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+    const mailboxTotalCents = Math.round(cart.totals.mailboxMonthly * 100);
+    const mailboxUnitPriceCents = totalMailboxes > 0 
+      ? Math.round(mailboxTotalCents / totalMailboxes) 
+      : 350; // Default base price
+
     // Add each domain as a line item
     for (const domain of cart.domains) {
       const priceCents = Math.round(domain.price * 100);
@@ -618,7 +834,6 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
       // Add mailboxes for this domain
       if (domain.mailboxes.count > 0) {
         const provider = domain.mailboxes.provider;
-        const unitPrice = provider === 'google' ? GOOGLE_MAILBOX_PRICE_CENTS : MICROSOFT_MAILBOX_PRICE_CENTS;
         const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
         
         lineItems.push({
@@ -627,8 +842,8 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
           domain: domain.domain,
           provider: provider,
           quantity: domain.mailboxes.count,
-          unit_price_cents: unitPrice,
-          total_cents: unitPrice * domain.mailboxes.count,
+          unit_price_cents: mailboxUnitPriceCents,
+          total_cents: mailboxUnitPriceCents * domain.mailboxes.count,
         });
       }
     }
