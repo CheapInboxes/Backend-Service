@@ -358,6 +358,21 @@ export class ResellerClubClient {
         'User-Agent': 'CheapInboxes/1.0 (Domain Registration Service)',
         'Accept': 'application/json',
       },
+      // ResellerClub expects repeated params for arrays: tlds=com&tlds=net&tlds=org
+      paramsSerializer: {
+        serialize: (params) => {
+          const parts: string[] = [];
+          for (const key in params) {
+            const value = params[key];
+            if (Array.isArray(value)) {
+              value.forEach((v) => parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`));
+            } else if (value !== null && value !== undefined) {
+              parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+            }
+          }
+          return parts.join('&');
+        },
+      },
     });
   }
 
@@ -423,7 +438,7 @@ export class ResellerClubClient {
   ): Promise<ApiResponse<DomainAvailabilityResult>> {
     return this.request('GET', '/domains/available.json', {
       'domain-name': domainName,
-      tlds: tlds.join(','),
+      tlds: tlds, // Pass as array - paramsSerializer will handle repeated params
     });
   }
 
@@ -453,7 +468,7 @@ export class ResellerClubClient {
   ): Promise<ApiResponse<DomainAvailabilityResult>> {
     return this.request('GET', '/domains/premium/available.json', {
       'key-word': keyword,
-      tlds: tlds.join(','),
+      tlds: tlds, // Pass as array - paramsSerializer will handle repeated params
     });
   }
 
@@ -468,7 +483,7 @@ export class ResellerClubClient {
   ): Promise<ApiResponse<string[]>> {
     return this.request('GET', '/domains/v5/suggest-names.json', {
       'keyword': keyword,
-      ...(tldOnly && { 'tld-only': tldOnly.join(',') }),
+      ...(tldOnly && { 'tld-only': tldOnly }), // Pass as array - paramsSerializer will handle repeated params
       ...(exactMatch !== undefined && { 'exact-match': exactMatch }),
     });
   }
