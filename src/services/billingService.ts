@@ -70,12 +70,15 @@ export interface UsageSummaryItem {
 export interface Invoice {
   id: string;
   organization_id: string;
+  order_id: string | null;
   period_start: string;
   period_end: string;
   total_cents: number;
   status: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible';
   stripe_invoice_id: string | null;
   created_at: string;
+  // Joined from payment when available
+  receipt_url?: string | null;
 }
 
 export interface InvoiceItem {
@@ -888,10 +891,10 @@ export async function getUsageSummary(
 // ==================== Invoices ====================
 
 /**
- * Get invoices for an organization
+ * Get invoices for an organization with receipt URLs from payments
  */
 export async function getInvoices(orgId: string): Promise<Invoice[]> {
-  const { data, error } = await supabase
+  const { data: invoices, error } = await supabase
     .from('invoices')
     .select('*')
     .eq('organization_id', orgId)
@@ -901,7 +904,31 @@ export async function getInvoices(orgId: string): Promise<Invoice[]> {
     throw new Error(`Failed to fetch invoices: ${error.message}`);
   }
 
-  return data as Invoice[];
+  if (!invoices || invoices.length === 0) {
+    return [];
+  }
+
+  // Get receipt URLs from payments
+  const invoiceIds = invoices.map(i => i.id);
+  const { data: payments } = await supabase
+    .from('payments')
+    .select('invoice_id, receipt_url')
+    .in('invoice_id', invoiceIds);
+
+  // Map receipt URLs to invoices
+  const receiptByInvoice = new Map<string, string | null>();
+  if (payments) {
+    for (const p of payments) {
+      if (p.invoice_id && p.receipt_url) {
+        receiptByInvoice.set(p.invoice_id, p.receipt_url);
+      }
+    }
+  }
+
+  return invoices.map(inv => ({
+    ...inv,
+    receipt_url: receiptByInvoice.get(inv.id) || null,
+  })) as Invoice[];
 }
 
 /**
@@ -931,11 +958,12 @@ export async function getAllInvoices(filters?: {
 
 /**
  * Get invoice by ID with line items
+ * For order invoices, also fetches the order's cart line items
  */
 export async function getInvoiceWithItems(
   invoiceId: string,
   orgId?: string
-): Promise<{ invoice: Invoice; items: InvoiceItem[] } | null> {
+): Promise<{ invoice: Invoice; items: InvoiceItem[]; orderLineItems?: OrderInvoiceLineItem[] } | null> {
   let query = supabase.from('invoices').select('*').eq('id', invoiceId);
 
   if (orgId) {
@@ -948,6 +976,19 @@ export async function getInvoiceWithItems(
     return null;
   }
 
+  // Get receipt URL from payment
+  const { data: payment } = await supabase
+    .from('payments')
+    .select('receipt_url')
+    .eq('invoice_id', invoiceId)
+    .single();
+
+  const invoiceWithReceipt: Invoice = {
+    ...invoice,
+    receipt_url: payment?.receipt_url || null,
+  };
+
+  // Get standard invoice items (for usage-based invoices)
   const { data: items, error: itemsError } = await supabase
     .from('invoice_items')
     .select('*')
@@ -957,10 +998,73 @@ export async function getInvoiceWithItems(
     throw new Error(`Failed to fetch invoice items: ${itemsError.message}`);
   }
 
+  // If this is an order invoice, get the order line items from cart_snapshot
+  let orderLineItems: OrderInvoiceLineItem[] | undefined;
+  if (invoice.order_id) {
+    const { data: order } = await supabase
+      .from('orders')
+      .select('cart_snapshot')
+      .eq('id', invoice.order_id)
+      .single();
+
+    if (order?.cart_snapshot) {
+      orderLineItems = buildOrderLineItems(order.cart_snapshot);
+    }
+  }
+
   return {
-    invoice: invoice as Invoice,
-    items: items as InvoiceItem[],
+    invoice: invoiceWithReceipt,
+    items: (items || []) as InvoiceItem[],
+    orderLineItems,
   };
+}
+
+// Line item type for order invoices
+export interface OrderInvoiceLineItem {
+  type: 'domain' | 'mailbox';
+  description: string;
+  domain?: string;
+  provider?: 'google' | 'microsoft';
+  quantity: number;
+  unit_price_cents: number;
+  total_cents: number;
+}
+
+// Build line items from cart snapshot
+function buildOrderLineItems(cartSnapshot: any): OrderInvoiceLineItem[] {
+  const items: OrderInvoiceLineItem[] = [];
+  const GOOGLE_PRICE = 350;
+  const MICROSOFT_PRICE = 325;
+
+  for (const domain of cartSnapshot.domains || []) {
+    const priceCents = Math.round(domain.price * 100);
+    items.push({
+      type: 'domain',
+      description: `Domain: ${domain.domain}`,
+      domain: domain.domain,
+      quantity: 1,
+      unit_price_cents: priceCents,
+      total_cents: priceCents,
+    });
+
+    if (domain.mailboxes?.count > 0) {
+      const provider = domain.mailboxes.provider;
+      const unitPrice = provider === 'google' ? GOOGLE_PRICE : MICROSOFT_PRICE;
+      const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
+      
+      items.push({
+        type: 'mailbox',
+        description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
+        domain: domain.domain,
+        provider: provider,
+        quantity: domain.mailboxes.count,
+        unit_price_cents: unitPrice,
+        total_cents: unitPrice * domain.mailboxes.count,
+      });
+    }
+  }
+
+  return items;
 }
 
 /**

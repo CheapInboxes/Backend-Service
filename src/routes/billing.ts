@@ -224,11 +224,13 @@ export async function billingRoutes(fastify: FastifyInstance) {
                   properties: {
                     id: { type: 'string', format: 'uuid' },
                     organization_id: { type: 'string', format: 'uuid' },
+                    order_id: { type: 'string', format: 'uuid', nullable: true },
                     period_start: { type: 'string' },
                     period_end: { type: 'string' },
                     total_cents: { type: 'number' },
                     status: { type: 'string', enum: ['draft', 'open', 'paid', 'void', 'uncollectible'] },
                     stripe_invoice_id: { type: 'string', nullable: true },
+                    receipt_url: { type: 'string', nullable: true },
                     created_at: { type: 'string' },
                   },
                 },
@@ -265,7 +267,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
     {
       preHandler: authMiddleware,
       schema: {
-        description: 'Get invoice details with line items.',
+        description: 'Get invoice details with line items. For order invoices, also includes order line items.',
         tags: ['billing'],
         security: [{ bearerAuth: [] }],
         params: {
@@ -285,11 +287,13 @@ export async function billingRoutes(fastify: FastifyInstance) {
                 properties: {
                   id: { type: 'string', format: 'uuid' },
                   organization_id: { type: 'string', format: 'uuid' },
+                  order_id: { type: 'string', format: 'uuid', nullable: true },
                   period_start: { type: 'string' },
                   period_end: { type: 'string' },
                   total_cents: { type: 'number' },
                   status: { type: 'string' },
                   stripe_invoice_id: { type: 'string', nullable: true },
+                  receipt_url: { type: 'string', nullable: true },
                   created_at: { type: 'string' },
                 },
               },
@@ -305,6 +309,23 @@ export async function billingRoutes(fastify: FastifyInstance) {
                     discount_percent: { type: 'number', nullable: true },
                     discount_amount_cents: { type: 'number', nullable: true },
                     final_unit_price_cents: { type: 'number' },
+                    total_cents: { type: 'number' },
+                  },
+                },
+              },
+              orderLineItems: {
+                type: 'array',
+                nullable: true,
+                description: 'Line items from order cart (only for order invoices)',
+                items: {
+                  type: 'object',
+                  properties: {
+                    type: { type: 'string', enum: ['domain', 'mailbox'] },
+                    description: { type: 'string' },
+                    domain: { type: 'string', nullable: true },
+                    provider: { type: 'string', enum: ['google', 'microsoft'], nullable: true },
+                    quantity: { type: 'number' },
+                    unit_price_cents: { type: 'number' },
                     total_cents: { type: 'number' },
                   },
                 },
