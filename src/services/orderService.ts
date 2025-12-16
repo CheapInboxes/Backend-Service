@@ -100,20 +100,43 @@ export async function createCheckoutSession(
   }
 
   // Build line items - everything is one-time payment
+  // Group domains by price to avoid Stripe's 100 line item limit
   const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
-  // Add domain line items
+  // Group domains by price (in cents) to create aggregate line items
+  const domainsByPrice = new Map<number, CartDomain[]>();
   for (const domain of cart.domains) {
+    const priceInCents = Math.round(domain.price * 100);
+    const existing = domainsByPrice.get(priceInCents) || [];
+    existing.push(domain);
+    domainsByPrice.set(priceInCents, existing);
+  }
+
+  // Add domain line items (grouped by price)
+  for (const [priceInCents, domains] of domainsByPrice) {
+    const count = domains.length;
+    const priceFormatted = (priceInCents / 100).toFixed(2);
+    
+    // For single domain at a price, show the domain name
+    // For multiple domains at same price, show count
+    const name = count === 1 
+      ? `Domain: ${domains[0].domain}`
+      : `Domain Registration (${count} domains)`;
+    
+    const description = count === 1
+      ? `1 year registration for ${domains[0].domain}`
+      : `1 year registration @ $${priceFormatted} each: ${domains.map(d => d.domain).slice(0, 10).join(', ')}${count > 10 ? ` and ${count - 10} more` : ''}`;
+
     lineItems.push({
       price_data: {
         currency: 'usd',
         product_data: {
-          name: `Domain: ${domain.domain}`,
-          description: `1 year registration for ${domain.domain}`,
+          name,
+          description,
         },
-        unit_amount: Math.round(domain.price * 100), // Convert to cents
+        unit_amount: priceInCents,
       },
-      quantity: 1,
+      quantity: count,
     });
   }
 
