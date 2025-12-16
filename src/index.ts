@@ -18,6 +18,7 @@ import { resellerclubRoutes } from './routes/resellerclub/index.js';
 import { namecheapImportRoutes } from './routes/namecheap-import.js';
 import { orderRoutes } from './routes/orders.js';
 import { uploadRoutes } from './routes/uploads.js';
+import { integrationRoutes } from './routes/integrations.js';
 
 const fastify = Fastify({
   logger: {
@@ -81,6 +82,7 @@ const start = async () => {
           { name: 'resellerclub', description: 'ResellerClub domain registrar integration endpoints' },
           { name: 'orders', description: 'Order checkout and configuration endpoints' },
           { name: 'uploads', description: 'File upload endpoints' },
+          { name: 'integrations', description: 'Sending platform integration endpoints' },
         ],
       },
     });
@@ -163,6 +165,7 @@ const start = async () => {
     await fastify.register(namecheapImportRoutes);
     await fastify.register(orderRoutes);
     await fastify.register(uploadRoutes);
+    await fastify.register(integrationRoutes);
 
     await fastify.listen({ port: env.PORT, host: '0.0.0.0' });
     console.log(`🚀 Server running on http://localhost:${env.PORT}`);
