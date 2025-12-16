@@ -480,7 +480,7 @@ export class ResellerClubClient {
     keyword: string,
     tldOnly?: string[],
     exactMatch?: boolean
-  ): Promise<ApiResponse<string[]>> {
+  ): Promise<ApiResponse<Record<string, { status: string; in_ga?: string }>>> {
     return this.request('GET', '/domains/v5/suggest-names.json', {
       'keyword': keyword,
       ...(tldOnly && { 'tld-only': tldOnly }), // Pass as array - paramsSerializer will handle repeated params

@@ -440,11 +440,19 @@ export async function resellerclubDomainRoutes(fastify: FastifyInstance) {
         if (suggestionsResponse.success && suggestionsResponse.data) {
           const exactDomains = new Set(exact.map(e => e.domain.toLowerCase()));
           
-          for (const suggestion of suggestionsResponse.data) {
+          // suggestionsResponse.data is an object: { "domain.com": { status, in_ga }, ... }
+          const suggestionDomains = Object.keys(suggestionsResponse.data);
+          
+          for (const suggestion of suggestionDomains) {
             // Skip if it's the same as one of the exact searches
             if (exactDomains.has(suggestion.toLowerCase())) continue;
             
-            // Suggestions from the API are already available
+            const suggestionData = (suggestionsResponse.data as Record<string, { status: string }>)[suggestion];
+            const isAvailable = suggestionData?.status === 'available';
+            
+            // Only include available suggestions
+            if (!isAvailable) continue;
+            
             suggestions.push({
               domain: suggestion,
               available: true,
