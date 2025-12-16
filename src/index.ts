@@ -16,6 +16,8 @@ import { adminRoutes } from './routes/admin.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { resellerclubRoutes } from './routes/resellerclub/index.js';
 import { namecheapImportRoutes } from './routes/namecheap-import.js';
+import { orderRoutes } from './routes/orders.js';
+import { uploadRoutes } from './routes/uploads.js';
 
 const fastify = Fastify({
   logger: {
@@ -77,6 +79,8 @@ const start = async () => {
           { name: 'admin', description: 'Admin-only endpoints for managing billing' },
           { name: 'webhooks', description: 'Webhook endpoints for external services' },
           { name: 'resellerclub', description: 'ResellerClub domain registrar integration endpoints' },
+          { name: 'orders', description: 'Order checkout and configuration endpoints' },
+          { name: 'uploads', description: 'File upload endpoints' },
         ],
       },
     });
@@ -157,6 +161,8 @@ const start = async () => {
     await fastify.register(webhookRoutes);
     await fastify.register(resellerclubRoutes);
     await fastify.register(namecheapImportRoutes);
+    await fastify.register(orderRoutes);
+    await fastify.register(uploadRoutes);
 
     await fastify.listen({ port: env.PORT, host: '0.0.0.0' });
     console.log(`🚀 Server running on http://localhost:${env.PORT}`);

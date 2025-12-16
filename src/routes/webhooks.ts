@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { verifyWebhookSignature } from '../clients/infrastructure/stripe.js';
 import { updatePaymentStatus, updateInvoiceStatus } from '../services/billingService.js';
+import { createOrderFromCheckout } from '../services/orderService.js';
 import type Stripe from 'stripe';
 
 export async function webhookRoutes(fastify: FastifyInstance) {
@@ -131,8 +132,18 @@ export async function webhookRoutes(fastify: FastifyInstance) {
           case 'checkout.session.completed': {
             const session = event.data.object as Stripe.Checkout.Session;
             console.log(`Checkout session completed: ${session.id}`);
-            // Payment method was added successfully
-            // No action needed - the customer now has a saved payment method
+            
+            // Check if this is an order checkout (has order_id in metadata)
+            if (session.metadata?.order_id) {
+              console.log(`Processing order: ${session.metadata.order_id}`);
+              // Get subscription ID if present (for mailbox subscriptions)
+              const subscriptionId = session.subscription as string | undefined;
+              await createOrderFromCheckout(session.id, subscriptionId);
+              console.log(`Order ${session.metadata.order_id} created with domains and mailboxes`);
+            } else {
+              // Legacy: Payment method was added successfully (setup mode)
+              console.log('Setup session completed - payment method added');
+            }
             break;
           }
 
