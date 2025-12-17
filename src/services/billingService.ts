@@ -1419,6 +1419,7 @@ export interface BillingSummarySubscription {
   mailboxCount: number;
   monthlyAmountCents: number;
   nextBillingDate: string;
+  provider: 'google' | 'microsoft';
 }
 
 export interface UpcomingPayment {
@@ -1448,6 +1449,7 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
       metadata,
       subscription_items (
         id,
+        code,
         quantity,
         unit_price_cents
       )
@@ -1489,6 +1491,10 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
     const monthlyAmount = items.reduce((sum, item) => {
       return sum + ((item.unit_price_cents || 0) * (item.quantity || 0));
     }, 0);
+    
+    // Determine provider from item code (e.g., mailbox_monthly_google -> google)
+    const firstItemCode = items[0]?.code || '';
+    const provider: 'google' | 'microsoft' = firstItemCode.includes('microsoft') ? 'microsoft' : 'google';
 
     result.push({
       id: sub.id,
@@ -1496,6 +1502,7 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
       mailboxCount,
       monthlyAmountCents: monthlyAmount,
       nextBillingDate: sub.next_billing_date,
+      provider,
     });
 
     totalMonthlyRecurring += monthlyAmount;

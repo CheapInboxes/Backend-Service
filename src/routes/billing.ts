@@ -274,6 +274,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
                     mailboxCount: { type: 'number' },
                     monthlyAmountCents: { type: 'number' },
                     nextBillingDate: { type: 'string' },
+                    provider: { type: 'string', enum: ['google', 'microsoft'] },
                   },
                 },
               },
