@@ -637,6 +637,13 @@ export async function billingRoutes(fastify: FastifyInstance) {
                         exp_year: { type: 'number' },
                       },
                     },
+                    link: {
+                      type: 'object',
+                      nullable: true,
+                      properties: {
+                        email: { type: 'string' },
+                      },
+                    },
                     created: { type: 'number' },
                   },
                 },
@@ -656,6 +663,10 @@ export async function billingRoutes(fastify: FastifyInstance) {
 
       try {
         const methods = await getPaymentMethods(orgId);
+        // Debug: log link payment methods to see what fields are available
+        methods.filter(pm => pm.type === 'link').forEach(pm => {
+          console.log('[Link PM]', JSON.stringify(pm, null, 2));
+        });
         const payment_methods = methods.map((pm) => ({
           id: pm.id,
           type: pm.type,
@@ -666,7 +677,12 @@ export async function billingRoutes(fastify: FastifyInstance) {
                 exp_month: pm.card.exp_month,
                 exp_year: pm.card.exp_year,
               }
-            : null,
+            : undefined,
+          link: pm.link
+            ? {
+                email: pm.link.email,
+              }
+            : undefined,
           created: pm.created,
         }));
         return { payment_methods };
