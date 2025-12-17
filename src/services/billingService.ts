@@ -1421,12 +1421,15 @@ export interface BillingSummarySubscription {
   nextBillingDate: string;
 }
 
+export interface UpcomingPayment {
+  amountCents: number;
+  date: string;
+  subscriptionCount: number;
+}
+
 export interface BillingSummary {
   subscriptions: BillingSummarySubscription[];
-  nextPayment: {
-    amountCents: number;
-    date: string;
-  } | null;
+  upcomingPayments: UpcomingPayment[];
   totalMonthlyRecurring: number;
 }
 
@@ -1459,8 +1462,9 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
 
   const result: BillingSummarySubscription[] = [];
   let totalMonthlyRecurring = 0;
-  let earliestBillingDate: string | null = null;
-  let earliestBillingAmount = 0;
+  
+  // Group payments by date
+  const paymentsByDate = new Map<string, { amountCents: number; subscriptionCount: number }>();
 
   for (const sub of subscriptions || []) {
     const items = (sub.subscription_items as any[]) || [];
@@ -1496,18 +1500,31 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
 
     totalMonthlyRecurring += monthlyAmount;
 
-    // Track earliest billing date for next payment
-    if (!earliestBillingDate || sub.next_billing_date < earliestBillingDate) {
-      earliestBillingDate = sub.next_billing_date;
-      earliestBillingAmount = monthlyAmount;
+    // Aggregate by billing date
+    const billingDate = sub.next_billing_date;
+    if (billingDate) {
+      const existing = paymentsByDate.get(billingDate);
+      if (existing) {
+        existing.amountCents += monthlyAmount;
+        existing.subscriptionCount += 1;
+      } else {
+        paymentsByDate.set(billingDate, { amountCents: monthlyAmount, subscriptionCount: 1 });
+      }
     }
   }
 
+  // Convert to sorted array
+  const upcomingPayments: UpcomingPayment[] = Array.from(paymentsByDate.entries())
+    .map(([date, data]) => ({
+      date,
+      amountCents: data.amountCents,
+      subscriptionCount: data.subscriptionCount,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
   return {
     subscriptions: result,
-    nextPayment: earliestBillingDate
-      ? { amountCents: earliestBillingAmount, date: earliestBillingDate }
-      : null,
+    upcomingPayments,
     totalMonthlyRecurring,
   };
 }

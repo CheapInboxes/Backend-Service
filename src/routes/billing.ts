@@ -277,11 +277,15 @@ export async function billingRoutes(fastify: FastifyInstance) {
                   },
                 },
               },
-              nextPayment: {
-                type: ['object', 'null'],
-                properties: {
-                  amountCents: { type: 'number' },
-                  date: { type: 'string' },
+              upcomingPayments: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    amountCents: { type: 'number' },
+                    date: { type: 'string' },
+                    subscriptionCount: { type: 'number' },
+                  },
                 },
               },
               totalMonthlyRecurring: { type: 'number' },
@@ -663,10 +667,6 @@ export async function billingRoutes(fastify: FastifyInstance) {
 
       try {
         const methods = await getPaymentMethods(orgId);
-        // Debug: log link payment methods to see what fields are available
-        methods.filter(pm => pm.type === 'link').forEach(pm => {
-          console.log('[Link PM]', JSON.stringify(pm, null, 2));
-        });
         const payment_methods = methods.map((pm) => ({
           id: pm.id,
           type: pm.type,
