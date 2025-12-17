@@ -284,7 +284,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
                   properties: {
                     amountCents: { type: 'number' },
                     date: { type: 'string' },
-                    subscriptionCount: { type: 'number' },
+                    mailboxCount: { type: 'number' },
                   },
                 },
               },

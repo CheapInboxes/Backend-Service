@@ -2181,5 +2181,116 @@ export async function adminRoutes(fastify: FastifyInstance) {
       }
     }
   );
+
+  // ==================== Session Management ====================
+
+  /**
+   * List all active sessions for internal users
+   */
+  fastify.get(
+    '/admin/sessions',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('superadmin')],
+      schema: {
+        description: 'List all active sessions for internal users (superadmin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              sessions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    session_id: { type: 'string', format: 'uuid' },
+                    user_id: { type: 'string', format: 'uuid' },
+                    email: { type: 'string' },
+                    name: { type: 'string', nullable: true },
+                    role: { type: 'string' },
+                    user_agent: { type: 'string', nullable: true },
+                    ip: { type: 'string', nullable: true },
+                    aal: { type: 'string' },
+                    created_at: { type: 'string' },
+                    refreshed_at: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (_request, reply) => {
+      try {
+        // Query sessions joined with internal_users
+        const { data, error } = await supabase.rpc('get_internal_user_sessions');
+        
+        if (error) {
+          // If RPC doesn't exist, fall back to direct query via service role
+          // This requires a database function, so let's create one if it doesn't exist
+          throw new Error(error.message);
+        }
+
+        return { sessions: data || [] };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'SESSIONS_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  /**
+   * Terminate a specific session
+   */
+  fastify.delete<{ Params: { sessionId: string } }>(
+    '/admin/sessions/:sessionId',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('superadmin')],
+      schema: {
+        description: 'Terminate a specific session (superadmin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['sessionId'],
+          properties: {
+            sessionId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+          404: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        // Delete the session from auth.sessions
+        const { error } = await supabase.rpc('terminate_session', {
+          target_session_id: request.params.sessionId,
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        return { success: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'SESSION_TERMINATE_FAILED', message } });
+      }
+    }
+  );
 }
 

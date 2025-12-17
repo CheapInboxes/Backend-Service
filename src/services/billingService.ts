@@ -1424,7 +1424,7 @@ export interface BillingSummarySubscription {
 export interface UpcomingPayment {
   amountCents: number;
   date: string;
-  subscriptionCount: number;
+  mailboxCount: number;
 }
 
 export interface BillingSummary {
@@ -1464,7 +1464,7 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
   let totalMonthlyRecurring = 0;
   
   // Group payments by date
-  const paymentsByDate = new Map<string, { amountCents: number; subscriptionCount: number }>();
+  const paymentsByDate = new Map<string, { amountCents: number; mailboxCount: number }>();
 
   for (const sub of subscriptions || []) {
     const items = (sub.subscription_items as any[]) || [];
@@ -1506,9 +1506,9 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
       const existing = paymentsByDate.get(billingDate);
       if (existing) {
         existing.amountCents += monthlyAmount;
-        existing.subscriptionCount += 1;
+        existing.mailboxCount += mailboxCount;
       } else {
-        paymentsByDate.set(billingDate, { amountCents: monthlyAmount, subscriptionCount: 1 });
+        paymentsByDate.set(billingDate, { amountCents: monthlyAmount, mailboxCount });
       }
     }
   }
@@ -1518,7 +1518,7 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
     .map(([date, data]) => ({
       date,
       amountCents: data.amountCents,
-      subscriptionCount: data.subscriptionCount,
+      mailboxCount: data.mailboxCount,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
