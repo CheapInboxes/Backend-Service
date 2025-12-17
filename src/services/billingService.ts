@@ -1413,45 +1413,30 @@ export async function updateInvoiceStatus(
 
 // ==================== Billing Summary ====================
 
-export interface UpcomingCharge {
-  date: string;
-  type: 'subscription' | 'domain_renewal';
-  description: string;
-  amountCents: number;
-  subscriptionId?: string;
-  domainId?: string;
-}
-
-export interface ActiveSubscription {
+export interface BillingSummarySubscription {
   id: string;
-  domainName: string;
-  itemCount: number;
+  domain: string;
+  mailboxCount: number;
   monthlyAmountCents: number;
   nextBillingDate: string;
 }
 
 export interface BillingSummary {
-  activeSubscriptions: ActiveSubscription[];
-  upcomingCharges: UpcomingCharge[];
-  totalMonthlyRecurring: number;
+  subscriptions: BillingSummarySubscription[];
   nextPayment: {
     amountCents: number;
     date: string;
-    description: string;
   } | null;
+  totalMonthlyRecurring: number;
 }
 
 /**
  * Get billing summary for an organization
- * Shows subscriptions, upcoming charges, and next payment
+ * Returns active subscriptions and next payment info
  */
 export async function getBillingSummary(orgId: string): Promise<BillingSummary> {
-  const activeSubscriptions: ActiveSubscription[] = [];
-  let totalMonthlyRecurring = 0;
-  const upcomingCharges: UpcomingCharge[] = [];
-
   // Get active subscriptions with their items
-  const { data: subscriptions } = await supabase
+  const { data: subscriptions, error } = await supabase
     .from('subscriptions')
     .select(`
       id,
@@ -1461,18 +1446,27 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
       subscription_items (
         id,
         quantity,
-        unit_price_cents,
-        code
+        unit_price_cents
       )
     `)
     .eq('organization_id', orgId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .order('next_billing_date', { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to fetch subscriptions: ${error.message}`);
+  }
+
+  const result: BillingSummarySubscription[] = [];
+  let totalMonthlyRecurring = 0;
+  let earliestBillingDate: string | null = null;
+  let earliestBillingAmount = 0;
 
   for (const sub of subscriptions || []) {
-    const items = sub.subscription_items || [];
+    const items = (sub.subscription_items as any[]) || [];
     
-    // Get domain name if linked
-    let domainName = 'Unknown domain';
+    // Get domain name
+    let domainName = 'Unknown';
     if (sub.domain_id) {
       const { data: domain } = await supabase
         .from('domains')
@@ -1486,104 +1480,35 @@ export async function getBillingSummary(orgId: string): Promise<BillingSummary> 
       domainName = sub.metadata.domain;
     }
 
-    // Calculate monthly amount for this subscription
-    const monthlyAmount = items.reduce((sum: number, item: any) => {
-      return sum + (item.unit_price_cents * item.quantity);
+    // Calculate totals for this subscription
+    const mailboxCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    const monthlyAmount = items.reduce((sum, item) => {
+      return sum + ((item.unit_price_cents || 0) * (item.quantity || 0));
     }, 0);
 
-    const itemCount = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
-
-    activeSubscriptions.push({
+    result.push({
       id: sub.id,
-      domainName,
-      itemCount,
+      domain: domainName,
+      mailboxCount,
       monthlyAmountCents: monthlyAmount,
       nextBillingDate: sub.next_billing_date,
     });
 
     totalMonthlyRecurring += monthlyAmount;
 
-    // Add to upcoming charges
-    upcomingCharges.push({
-      date: sub.next_billing_date,
-      type: 'subscription',
-      description: `${domainName} - ${itemCount} mailbox${itemCount !== 1 ? 'es' : ''}`,
-      amountCents: monthlyAmount,
-      subscriptionId: sub.id,
-    });
+    // Track earliest billing date for next payment
+    if (!earliestBillingDate || sub.next_billing_date < earliestBillingDate) {
+      earliestBillingDate = sub.next_billing_date;
+      earliestBillingAmount = monthlyAmount;
+    }
   }
-
-  // Get upcoming domain renewals (next 60 days)
-  const renewalCutoff = new Date();
-  renewalCutoff.setDate(renewalCutoff.getDate() + 60);
-
-  const { data: expiringDomains } = await supabase
-    .from('domains')
-    .select('id, domain, expires_at, auto_renew')
-    .eq('organization_id', orgId)
-    .eq('auto_renew', true)
-    .not('expires_at', 'is', null)
-    .lte('expires_at', renewalCutoff.toISOString())
-    .order('expires_at');
-
-  for (const domain of expiringDomains || []) {
-    // Look up renewal price from pricebook based on TLD
-    const tld = domain.domain.split('.').pop() || 'com';
-    const renewalPrice = await getDomainRenewalPrice(tld);
-
-    upcomingCharges.push({
-      date: domain.expires_at,
-      type: 'domain_renewal',
-      description: `${domain.domain} renewal (1 year)`,
-      amountCents: renewalPrice,
-      domainId: domain.id,
-    });
-  }
-
-  // Sort upcoming charges by date
-  upcomingCharges.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  // Get next payment
-  const nextPayment = upcomingCharges.length > 0
-    ? {
-        amountCents: upcomingCharges[0].amountCents,
-        date: upcomingCharges[0].date,
-        description: upcomingCharges[0].description,
-      }
-    : null;
 
   return {
-    activeSubscriptions,
-    upcomingCharges,
+    subscriptions: result,
+    nextPayment: earliestBillingDate
+      ? { amountCents: earliestBillingAmount, date: earliestBillingDate }
+      : null,
     totalMonthlyRecurring,
-    nextPayment,
   };
-}
-
-/**
- * Get domain renewal price from pricebook
- */
-async function getDomainRenewalPrice(tld: string): Promise<number> {
-  const code = `domain_renewal_${tld}`;
-  
-  const { data: item } = await supabase
-    .from('pricebook_items')
-    .select('base_unit_price_cents')
-    .eq('code', code)
-    .single();
-
-  // Default prices if not in pricebook
-  const defaults: Record<string, number> = {
-    com: 1299,
-    net: 1299,
-    org: 1299,
-    io: 4999,
-    co: 2999,
-    ai: 8999,
-    dev: 1499,
-    app: 1499,
-  };
-
-  return item?.base_unit_price_cents || defaults[tld] || 1299;
 }
 
