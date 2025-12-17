@@ -88,16 +88,24 @@ export async function createPaymentCheckoutSession(
 
 /**
  * List payment methods for a customer
+ * Fetches both card and link payment methods by default
  */
 export async function listPaymentMethods(
   customerId: string,
-  type: Stripe.PaymentMethodListParams.Type = 'card'
+  types: Stripe.PaymentMethodListParams.Type[] = ['card', 'link']
 ): Promise<Stripe.PaymentMethod[]> {
-  const paymentMethods = await stripe.paymentMethods.list({
-    customer: customerId,
-    type,
-  });
-  return paymentMethods.data;
+  // Stripe requires separate calls for each payment method type
+  const results = await Promise.all(
+    types.map(type =>
+      stripe.paymentMethods.list({
+        customer: customerId,
+        type,
+      })
+    )
+  );
+  
+  // Combine and return all payment methods
+  return results.flatMap(r => r.data);
 }
 
 /**
