@@ -1346,6 +1346,12 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     status: { type: 'string' },
                     source_provider: { type: 'string' },
                     created_at: { type: 'string' },
+                    organization: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                      },
+                    },
                   },
                 },
               },
@@ -1358,7 +1364,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        let query = supabase.from('domains').select('*');
+        let query = supabase.from('domains').select('*, organizations(name)');
         if (request.query.org_id) {
           query = query.eq('organization_id', request.query.org_id);
         }
@@ -1375,7 +1381,14 @@ export async function adminRoutes(fastify: FastifyInstance) {
           throw new Error(error.message);
         }
 
-        return { domains: domains || [] };
+        // Flatten the organization data
+        const flattenedDomains = (domains || []).map((d: any) => ({
+          ...d,
+          organization: d.organizations,
+          organizations: undefined,
+        }));
+
+        return { domains: flattenedDomains };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'DOMAINS_FETCH_FAILED', message } });
@@ -1499,6 +1512,18 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     full_email: { type: 'string' },
                     status: { type: 'string' },
                     created_at: { type: 'string' },
+                    organization: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                      },
+                    },
+                    domain: {
+                      type: 'object',
+                      properties: {
+                        domain: { type: 'string' },
+                      },
+                    },
                   },
                 },
               },
@@ -1511,7 +1536,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        let query = supabase.from('mailboxes').select('*');
+        let query = supabase.from('mailboxes').select('*, organizations(name), domains(domain)');
         if (request.query.org_id) {
           query = query.eq('organization_id', request.query.org_id);
         }
@@ -1528,7 +1553,16 @@ export async function adminRoutes(fastify: FastifyInstance) {
           throw new Error(error.message);
         }
 
-        return { mailboxes: mailboxes || [] };
+        // Flatten the organization and domain data
+        const flattenedMailboxes = (mailboxes || []).map((m: any) => ({
+          ...m,
+          organization: m.organizations,
+          domain: m.domains,
+          organizations: undefined,
+          domains: undefined,
+        }));
+
+        return { mailboxes: flattenedMailboxes };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'MAILBOXES_FETCH_FAILED', message } });
@@ -2289,6 +2323,308 @@ export async function adminRoutes(fastify: FastifyInstance) {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(400).send({ error: { code: 'SESSION_TERMINATE_FAILED', message } });
+      }
+    }
+  );
+
+  // ==================== Integrations ====================
+
+  /**
+   * List all integrations across organizations (admin view)
+   */
+  fastify.get<{
+    Querystring: { org_id?: string; type?: string; provider?: string; status?: string };
+  }>(
+    '/admin/integrations',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('view:integrations')],
+      schema: {
+        description: 'List all integrations across organizations (admin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: 'object',
+          properties: {
+            org_id: { type: 'string', format: 'uuid' },
+            type: { type: 'string' },
+            provider: { type: 'string' },
+            status: { type: 'string', enum: ['active', 'invalid', 'disabled'] },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              integrations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', format: 'uuid' },
+                    organization_id: { type: 'string', format: 'uuid' },
+                    type: { type: 'string' },
+                    provider: { type: 'string' },
+                    status: { type: 'string' },
+                    created_at: { type: 'string' },
+                    organization: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        let query = supabase
+          .from('integrations')
+          .select('id, organization_id, type, provider, status, created_at, organizations(name)');
+
+        if (request.query.org_id) {
+          query = query.eq('organization_id', request.query.org_id);
+        }
+        if (request.query.type) {
+          query = query.eq('type', request.query.type);
+        }
+        if (request.query.provider) {
+          query = query.eq('provider', request.query.provider);
+        }
+        if (request.query.status) {
+          query = query.eq('status', request.query.status);
+        }
+
+        const { data: integrations, error } = await query.order('created_at', { ascending: false });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        // Flatten the organization data
+        const flattenedIntegrations = (integrations || []).map((i: any) => ({
+          ...i,
+          organization: i.organizations,
+          organizations: undefined,
+        }));
+
+        return { integrations: flattenedIntegrations };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'INTEGRATIONS_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  // ==================== Usage Events ====================
+
+  /**
+   * List all usage events across organizations (admin view)
+   */
+  fastify.get<{
+    Querystring: { org_id?: string; code?: string; start_date?: string; end_date?: string };
+  }>(
+    '/admin/usage-events',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('view:usage')],
+      schema: {
+        description: 'List all usage events across organizations (admin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: 'object',
+          properties: {
+            org_id: { type: 'string', format: 'uuid' },
+            code: { type: 'string' },
+            start_date: { type: 'string', format: 'date-time' },
+            end_date: { type: 'string', format: 'date-time' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              events: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', format: 'uuid' },
+                    organization_id: { type: 'string', format: 'uuid' },
+                    code: { type: 'string' },
+                    quantity: { type: 'number' },
+                    effective_at: { type: 'string' },
+                    created_at: { type: 'string' },
+                    related_ids: { type: 'object' },
+                    organization: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        let query = supabase
+          .from('usage_events')
+          .select('id, organization_id, code, quantity, effective_at, created_at, related_ids, organizations(name)');
+
+        if (request.query.org_id) {
+          query = query.eq('organization_id', request.query.org_id);
+        }
+        if (request.query.code) {
+          query = query.eq('code', request.query.code);
+        }
+        if (request.query.start_date) {
+          query = query.gte('effective_at', request.query.start_date);
+        }
+        if (request.query.end_date) {
+          query = query.lte('effective_at', request.query.end_date);
+        }
+
+        const { data: events, error } = await query.order('effective_at', { ascending: false }).limit(500);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        // Flatten the organization data
+        const flattenedEvents = (events || []).map((e: any) => ({
+          ...e,
+          organization: e.organizations,
+          organizations: undefined,
+        }));
+
+        return { events: flattenedEvents };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'USAGE_EVENTS_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  /**
+   * Get usage event codes (for dropdown filters)
+   */
+  fastify.get(
+    '/admin/usage-events/codes',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('view:usage')],
+      schema: {
+        description: 'Get distinct usage event codes (admin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              codes: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (_request, reply) => {
+      try {
+        const { data: items } = await supabase
+          .from('pricebook_items')
+          .select('code')
+          .order('code');
+
+        const codes = (items || []).map((i: { code: string }) => i.code);
+
+        return { codes };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'CODES_FETCH_FAILED', message } });
+      }
+    }
+  );
+
+  /**
+   * Update organization status (admin)
+   */
+  fastify.patch<{
+    Params: { id: string };
+    Body: { status: 'active' | 'trialing' | 'suspended' };
+  }>(
+    '/admin/organizations/:id/status',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('manage:organizations')],
+      schema: {
+        description: 'Update organization status (admin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['status'],
+          properties: {
+            status: { type: 'string', enum: ['active', 'trialing', 'suspended'] },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              organization: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  status: { type: 'string' },
+                },
+              },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+          404: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { data: org, error } = await supabase
+          .from('organizations')
+          .update({ status: request.body.status })
+          .eq('id', request.params.id)
+          .select('id, status')
+          .single();
+
+        if (error || !org) {
+          return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        }
+
+        return { organization: org };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'ORG_UPDATE_FAILED', message } });
       }
     }
   );

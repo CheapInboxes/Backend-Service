@@ -1,7 +1,7 @@
 import { supabase } from '../clients/infrastructure/supabase.js';
 import { stripe } from '../clients/infrastructure/stripe.js';
 import { ensureStripeCustomer } from './billingService.js';
-import { sendOrderConfirmation, sendMailboxesReady } from '../clients/notifications/index.js';
+import { sendMailboxesReady } from '../clients/notifications/index.js';
 import type Stripe from 'stripe';
 
 // Types
@@ -379,31 +379,8 @@ export async function createOrderFromCheckout(
     throw new Error(`Failed to update order status: ${updateError?.message}`);
   }
 
-  // Send order confirmation email
-  try {
-    // Get org billing email
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('billing_email')
-      .eq('id', order.organization_id)
-      .single();
-
-    if (org?.billing_email) {
-      const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
-      const totalAmount = cart.totals.domainTotal + cart.totals.mailboxMonthly;
-      
-      await sendOrderConfirmation(org.billing_email, {
-        orderId: order.id,
-        domainCount: cart.domains.length,
-        mailboxCount: totalMailboxes,
-        totalAmount,
-      });
-      console.log(`[Order] Confirmation email sent for order ${order.id}`);
-    }
-  } catch (emailError) {
-    // Log but don't fail the order if email fails
-    console.error('[Order] Failed to send confirmation email:', emailError);
-  }
+  // Payment Receipt email is sent via Stripe webhook (payment_intent.succeeded)
+  // No need to send Order Confirmation separately
 
   return updatedOrder as Order;
 }
