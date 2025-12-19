@@ -5,7 +5,7 @@ import { createUsageEvent } from './usageService.js';
 import * as namecheapClient from '../clients/domain-registrars/namecheap.js';
 import * as resellerclubClient from '../clients/domain-registrars/resellerclub/index.js';
 import * as cloudflareClient from '../clients/dns/cloudflare.js';
-import { sendProvisioningFailed } from '../clients/notifications/index.js';
+import { sendProvisioningFailed, sendDomainRegistered } from '../clients/notifications/index.js';
 
 export async function createDomain(
   orgId: string,
@@ -178,6 +178,26 @@ export async function provisionDomain(runId: string): Promise<{
 
     if (runUpdateError || !updatedRun) {
       throw new Error(`Failed to update run: ${runUpdateError?.message || 'Unknown error'}`);
+    }
+
+    // Send domain registered email notification
+    try {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('billing_email')
+        .eq('id', domain.organization_id)
+        .single();
+
+      if (org?.billing_email) {
+        await sendDomainRegistered(org.billing_email, {
+          domain: domain.domain,
+          registrar: domain.source_provider === 'cheapinboxes' ? 'ResellerClub' : domain.source_provider,
+        });
+        console.log(`[Domain] Registration email sent for ${domain.domain}`);
+      }
+    } catch (emailError) {
+      // Don't fail provisioning if email fails
+      console.error('[Domain] Failed to send registration email:', emailError);
     }
 
     return {

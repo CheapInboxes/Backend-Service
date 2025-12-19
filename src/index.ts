@@ -12,7 +12,7 @@ import { domainRoutes } from './routes/domains.js';
 import { mailboxRoutes } from './routes/mailboxes.js';
 import { usageRoutes } from './routes/usage.js';
 import { billingRoutes } from './routes/billing.js';
-import { adminRoutes } from './routes/admin.js';
+import { adminRoutes } from './routes/admin/index.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { resellerclubRoutes } from './routes/resellerclub/index.js';
 import { namecheapImportRoutes } from './routes/namecheap-import.js';

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { createResellerClubClient } from '../../clients/domain-registrars/resellerclub/index.js';
 import { env } from '../../config/env.js';
+import { authMiddleware } from '../../middleware/auth.js';
 
 export async function resellerclubDomainRoutes(fastify: FastifyInstance) {
   // Search domain availability
@@ -9,6 +10,7 @@ export async function resellerclubDomainRoutes(fastify: FastifyInstance) {
   }>(
     '/resellerclub/domains/search',
     {
+      preHandler: [authMiddleware],
       schema: {
         summary: 'Search Domain Availability',
         description: 'Check availability of domain names across multiple TLDs using ResellerClub API.',
@@ -174,6 +176,7 @@ export async function resellerclubDomainRoutes(fastify: FastifyInstance) {
   }>(
     '/resellerclub/domains/suggest',
     {
+      preHandler: [authMiddleware],
       schema: {
         summary: 'Suggest Domain Names',
         description: 'Get domain name suggestions based on a keyword using ResellerClub API.',
@@ -281,6 +284,7 @@ export async function resellerclubDomainRoutes(fastify: FastifyInstance) {
   }>(
     '/resellerclub/domains/search-with-suggestions',
     {
+      preHandler: [authMiddleware],
       schema: {
         summary: 'Search Domain with Suggestions',
         description: 'Check availability of exact domain AND get alternative suggestions in one call.',

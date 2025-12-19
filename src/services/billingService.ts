@@ -1031,6 +1031,8 @@ export async function getInvoices(orgId: string): Promise<Invoice[]> {
 export async function getAllInvoices(filters?: {
   status?: string;
   orgId?: string;
+  limit?: number;
+  offset?: number;
 }): Promise<Invoice[]> {
   let query = supabase.from('invoices').select('*');
 
@@ -1041,7 +1043,14 @@ export async function getAllInvoices(filters?: {
     query = query.eq('organization_id', filters.orgId);
   }
 
-  const { data, error } = await query.order('created_at', { ascending: false });
+  query = query.order('created_at', { ascending: false });
+
+  // Apply pagination
+  const limit = filters?.limit ?? 50;
+  const offset = filters?.offset ?? 0;
+  query = query.range(offset, offset + limit - 1);
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`Failed to fetch invoices: ${error.message}`);
@@ -1380,6 +1389,8 @@ export async function getPayments(orgId: string): Promise<Payment[]> {
 export async function getAllPayments(filters?: {
   status?: string;
   orgId?: string;
+  limit?: number;
+  offset?: number;
 }): Promise<Payment[]> {
   let query = supabase.from('payments').select('*');
 
@@ -1390,7 +1401,14 @@ export async function getAllPayments(filters?: {
     query = query.eq('organization_id', filters.orgId);
   }
 
-  const { data, error } = await query.order('processed_at', { ascending: false });
+  query = query.order('processed_at', { ascending: false });
+
+  // Apply pagination
+  const limit = filters?.limit ?? 50;
+  const offset = filters?.offset ?? 0;
+  query = query.range(offset, offset + limit - 1);
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`Failed to fetch payments: ${error.message}`);

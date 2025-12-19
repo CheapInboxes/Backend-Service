@@ -1,12 +1,14 @@
 import { FastifyInstance } from 'fastify';
 import { createResellerClubClient } from '../../clients/domain-registrars/resellerclub/index.js';
 import { env } from '../../config/env.js';
+import { internalAuthMiddleware, requirePermission } from '../../middleware/internalAuth.js';
 
 export async function resellerclubPricingRoutes(fastify: FastifyInstance) {
   // Get reseller pricing
   fastify.get(
     '/resellerclub/pricing/reseller',
     {
+      preHandler: [internalAuthMiddleware, requirePermission('view:pricebook')],
       schema: {
         summary: 'Get Reseller Pricing',
         description: 'Get reseller pricing for all products from ResellerClub.',
@@ -75,6 +77,7 @@ export async function resellerclubPricingRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/resellerclub/balance',
     {
+      preHandler: [internalAuthMiddleware, requirePermission('view:pricebook')],
       schema: {
         summary: 'Get Reseller Balance',
         description: 'Get the current reseller account balance from ResellerClub.',
