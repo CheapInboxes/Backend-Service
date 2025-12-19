@@ -2422,6 +2422,91 @@ export async function adminRoutes(fastify: FastifyInstance) {
     }
   );
 
+  /**
+   * Test an integration's connection (validate API key)
+   */
+  fastify.post<{
+    Params: { id: string };
+  }>(
+    '/admin/integrations/:id/test',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('manage:integrations')],
+      schema: {
+        description: 'Test an integration connection by validating its API key (admin only).',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              message: { type: 'string' },
+              status: { type: 'string' },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+          404: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        // Import the sending platform client dynamically
+        const { getSendingPlatformClient } = await import('../clients/sending-platforms/index.js');
+
+        // Get integration with credentials
+        const { data: integration, error } = await supabase
+          .from('integrations')
+          .select('*')
+          .eq('id', request.params.id)
+          .single();
+
+        if (error || !integration) {
+          return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Integration not found' } });
+        }
+
+        // Only test sending integrations
+        if (integration.type !== 'sending') {
+          return { success: true, message: 'Non-sending integrations cannot be tested', status: integration.status };
+        }
+
+        const client = getSendingPlatformClient(integration.provider);
+        if (!client) {
+          return { success: false, message: `Unknown provider: ${integration.provider}`, status: integration.status };
+        }
+
+        // Test the connection
+        const isValid = await client.validateApiKey(integration.api_key, integration.base_url);
+
+        // Update status if changed
+        const newStatus = isValid ? 'active' : 'invalid';
+        if (integration.status !== newStatus) {
+          await supabase
+            .from('integrations')
+            .update({ status: newStatus, updated_at: new Date().toISOString() })
+            .eq('id', integration.id);
+        }
+
+        return {
+          success: isValid,
+          message: isValid ? 'Connection successful' : 'Connection failed - API key may be invalid',
+          status: newStatus,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return reply.code(400).send({ error: { code: 'TEST_FAILED', message } });
+      }
+    }
+  );
+
   // ==================== Usage Events ====================
 
   /**
