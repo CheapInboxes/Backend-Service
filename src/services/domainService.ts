@@ -235,23 +235,45 @@ export async function listDomains(
   orgId: string,
   filters?: { status?: string; tags?: string[] }
 ): Promise<Domain[]> {
-  let query = supabase.from('domains').select('*').eq('organization_id', orgId);
+  // Supabase has a default limit of 1000 rows, so we need to paginate for large orgs
+  let allDomains: any[] = [];
+  let offset = 0;
+  const pageSize = 1000;
 
-  if (filters?.status) {
-    query = query.eq('status', filters.status);
+  while (true) {
+    let query = supabase.from('domains').select('*').eq('organization_id', orgId);
+
+    if (filters?.status) {
+      query = query.eq('status', filters.status);
+    }
+
+    if (filters?.tags && filters.tags.length > 0) {
+      query = query.contains('tags', filters.tags);
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(`Failed to list domains: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allDomains = allDomains.concat(data);
+
+    // If we got less than a full page, we're done
+    if (data.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
   }
 
-  if (filters?.tags && filters.tags.length > 0) {
-    query = query.contains('tags', filters.tags);
-  }
-
-  const { data, error } = await query.order('created_at', { ascending: false });
-
-  if (error) {
-    throw new Error(`Failed to list domains: ${error.message}`);
-  }
-
-  return (data || []) as Domain[];
+  return allDomains as Domain[];
 }
 
 export async function getDomain(domainId: string, orgId: string): Promise<Domain> {

@@ -1124,11 +1124,32 @@ export interface OrderInvoiceLineItem {
   total_cents: number;
 }
 
+// Volume pricing tiers (in cents) - matches orderService.ts
+// 0-99: $3.50, 100-249: $3.25, 250-999: $3.00, 1000+: $2.80
+const VOLUME_PRICING_TIERS = [
+  { minQty: 1000, price: 280 },
+  { minQty: 250, price: 300 },
+  { minQty: 100, price: 325 },
+  { minQty: 0, price: 350 },
+] as const;
+
+function getMailboxPriceForQuantity(totalQuantity: number): number {
+  for (const tier of VOLUME_PRICING_TIERS) {
+    if (totalQuantity >= tier.minQty) {
+      return tier.price;
+    }
+  }
+  return 350; // Default base price
+}
+
 // Build line items from cart snapshot
 function buildOrderLineItems(cartSnapshot: any): OrderInvoiceLineItem[] {
   const items: OrderInvoiceLineItem[] = [];
-  const GOOGLE_PRICE = 350;
-  const MICROSOFT_PRICE = 325;
+  
+  // Calculate total mailboxes first for volume pricing
+  const totalMailboxes = (cartSnapshot.totals?.totalGoogleMailboxes || 0) + 
+                         (cartSnapshot.totals?.totalMicrosoftMailboxes || 0);
+  const mailboxUnitPrice = getMailboxPriceForQuantity(totalMailboxes);
 
   for (const domain of cartSnapshot.domains || []) {
     const priceCents = Math.round(domain.price * 100);
@@ -1143,7 +1164,6 @@ function buildOrderLineItems(cartSnapshot: any): OrderInvoiceLineItem[] {
 
     if (domain.mailboxes?.count > 0) {
       const provider = domain.mailboxes.provider;
-      const unitPrice = provider === 'google' ? GOOGLE_PRICE : MICROSOFT_PRICE;
       const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
       
       items.push({
@@ -1152,8 +1172,8 @@ function buildOrderLineItems(cartSnapshot: any): OrderInvoiceLineItem[] {
         domain: domain.domain,
         provider: provider,
         quantity: domain.mailboxes.count,
-        unit_price_cents: unitPrice,
-        total_cents: unitPrice * domain.mailboxes.count,
+        unit_price_cents: mailboxUnitPrice,
+        total_cents: mailboxUnitPrice * domain.mailboxes.count,
       });
     }
   }

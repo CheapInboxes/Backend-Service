@@ -257,23 +257,45 @@ export async function listMailboxes(
   domainId?: string,
   filters?: { status?: string }
 ): Promise<Mailbox[]> {
-  let query = supabase.from('mailboxes').select('*').eq('organization_id', orgId);
+  // Supabase has a default limit of 1000 rows, so we need to paginate for large orgs
+  let allMailboxes: any[] = [];
+  let offset = 0;
+  const pageSize = 1000;
 
-  if (domainId) {
-    query = query.eq('domain_id', domainId);
+  while (true) {
+    let query = supabase.from('mailboxes').select('*').eq('organization_id', orgId);
+
+    if (domainId) {
+      query = query.eq('domain_id', domainId);
+    }
+
+    if (filters?.status) {
+      query = query.eq('status', filters.status);
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(`Failed to list mailboxes: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allMailboxes = allMailboxes.concat(data);
+
+    // If we got less than a full page, we're done
+    if (data.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
   }
 
-  if (filters?.status) {
-    query = query.eq('status', filters.status);
-  }
-
-  const { data, error } = await query.order('created_at', { ascending: false });
-
-  if (error) {
-    throw new Error(`Failed to list mailboxes: ${error.message}`);
-  }
-
-  return (data || []) as Mailbox[];
+  return allMailboxes as Mailbox[];
 }
 
 export async function getMailbox(mailboxId: string, orgId: string): Promise<Mailbox> {

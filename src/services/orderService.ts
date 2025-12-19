@@ -685,20 +685,41 @@ export async function getOrderWithItems(
   }
 
   // Get mailboxes for this order
-  const { data: mailboxes, error: mailboxesError } = await supabase
-    .from('mailboxes')
-    .select('*')
-    .eq('order_id', orderId)
-    .order('created_at');
+  // Note: Supabase has a default limit of 1000 rows, so we need to paginate for large orders
+  let allMailboxes: any[] = [];
+  let offset = 0;
+  const pageSize = 1000;
+  
+  while (true) {
+    const { data: mailboxPage, error: mailboxesError } = await supabase
+      .from('mailboxes')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at')
+      .range(offset, offset + pageSize - 1);
 
-  if (mailboxesError) {
-    throw new Error(`Failed to fetch mailboxes: ${mailboxesError.message}`);
+    if (mailboxesError) {
+      throw new Error(`Failed to fetch mailboxes: ${mailboxesError.message}`);
+    }
+
+    if (!mailboxPage || mailboxPage.length === 0) {
+      break;
+    }
+
+    allMailboxes = allMailboxes.concat(mailboxPage);
+    
+    // If we got less than a full page, we're done
+    if (mailboxPage.length < pageSize) {
+      break;
+    }
+    
+    offset += pageSize;
   }
 
   return {
     order: order as Order,
     domains: (domains || []) as Domain[],
-    mailboxes: (mailboxes || []) as Mailbox[],
+    mailboxes: allMailboxes as Mailbox[],
   };
 }
 
@@ -955,12 +976,10 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     const cart = order.cart_snapshot as CartSnapshot;
     const lineItems: OrderLineItem[] = [];
 
-    // Calculate mailbox unit price from cart totals (historical price at time of purchase)
+    // Calculate mailbox unit price using volume pricing logic
+    // This matches what was actually charged to Stripe during checkout
     const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
-    const mailboxTotalCents = Math.round(cart.totals.mailboxMonthly * 100);
-    const mailboxUnitPriceCents = totalMailboxes > 0 
-      ? Math.round(mailboxTotalCents / totalMailboxes) 
-      : 350; // Default base price
+    const mailboxUnitPriceCents = getMailboxPriceForQuantity(totalMailboxes);
 
     // Add each domain as a line item
     for (const domain of cart.domains) {
