@@ -1,6 +1,7 @@
 import { supabase } from '../clients/infrastructure/supabase.js';
 import { stripe } from '../clients/infrastructure/stripe.js';
 import { ensureStripeCustomer } from './billingService.js';
+import { sendOrderConfirmation, sendMailboxesReady } from '../clients/notifications/index.js';
 import type Stripe from 'stripe';
 
 // Types
@@ -378,6 +379,32 @@ export async function createOrderFromCheckout(
     throw new Error(`Failed to update order status: ${updateError?.message}`);
   }
 
+  // Send order confirmation email
+  try {
+    // Get org billing email
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('billing_email')
+      .eq('id', order.organization_id)
+      .single();
+
+    if (org?.billing_email) {
+      const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+      const totalAmount = cart.totals.domainTotal + cart.totals.mailboxMonthly;
+      
+      await sendOrderConfirmation(org.billing_email, {
+        orderId: order.id,
+        domainCount: cart.domains.length,
+        mailboxCount: totalMailboxes,
+        totalAmount,
+      });
+      console.log(`[Order] Confirmation email sent for order ${order.id}`);
+    }
+  } catch (emailError) {
+    // Log but don't fail the order if email fails
+    console.error('[Order] Failed to send confirmation email:', emailError);
+  }
+
   return updatedOrder as Order;
 }
 
@@ -753,6 +780,83 @@ export async function cancelOrder(orderId: string): Promise<void> {
     .from('orders')
     .update({ status: 'canceled' })
     .eq('id', orderId);
+}
+
+/**
+ * Mark order provisioning as complete and send notification
+ * Called by automation worker when all domains/mailboxes are provisioned
+ */
+export async function markOrderProvisioningComplete(orderId: string): Promise<Order> {
+  // Get the order
+  const { data: order, error: orderError } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('id', orderId)
+    .single();
+
+  if (orderError || !order) {
+    throw new Error('Order not found');
+  }
+
+  if (order.status !== 'provisioning') {
+    throw new Error(`Order is not in provisioning state (current: ${order.status})`);
+  }
+
+  // Mark all domains as ready
+  await supabase
+    .from('domains')
+    .update({ status: 'ready' })
+    .eq('order_id', orderId);
+
+  // Mark all mailboxes as active
+  await supabase
+    .from('mailboxes')
+    .update({ status: 'active' })
+    .eq('order_id', orderId);
+
+  // Update order to completed
+  const { data: updatedOrder, error: updateError } = await supabase
+    .from('orders')
+    .update({ status: 'completed' })
+    .eq('id', orderId)
+    .select()
+    .single();
+
+  if (updateError || !updatedOrder) {
+    throw new Error(`Failed to update order: ${updateError?.message}`);
+  }
+
+  // Get domains for notification
+  const { data: domains } = await supabase
+    .from('domains')
+    .select('domain')
+    .eq('order_id', orderId);
+
+  const { data: mailboxes } = await supabase
+    .from('mailboxes')
+    .select('id')
+    .eq('order_id', orderId);
+
+  // Send mailboxes ready notification
+  try {
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('billing_email')
+      .eq('id', order.organization_id)
+      .single();
+
+    if (org?.billing_email && domains && mailboxes) {
+      await sendMailboxesReady(org.billing_email, {
+        mailboxCount: mailboxes.length,
+        domains: domains.map((d: any) => d.domain),
+      });
+      console.log(`[Order] Mailboxes ready email sent for order ${orderId}`);
+    }
+  } catch (emailError) {
+    console.error('[Order] Failed to send mailboxes ready email:', emailError);
+  }
+
+  return updatedOrder as Order;
 }
 
 /**

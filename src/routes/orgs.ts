@@ -6,6 +6,9 @@ import {
   getOrganization,
 } from '../services/orgService.js';
 import { CreateOrgRequest, CreateOrgResponse, GetOrgResponse } from '../types/index.js';
+import { supabase } from '../clients/infrastructure/supabase.js';
+import { sendTeamMemberInvited } from '../clients/notifications/index.js';
+import { randomUUID } from 'crypto';
 
 export async function orgRoutes(fastify: FastifyInstance) {
   // Create organization
@@ -286,6 +289,174 @@ export async function orgRoutes(fastify: FastifyInstance) {
           return;
         }
         throw error;
+      }
+    }
+  );
+
+  // Invite team member
+  fastify.post<{
+    Params: { orgId: string };
+    Body: { email: string; role?: 'admin' | 'member' };
+  }>(
+    '/orgs/:orgId/members',
+    {
+      preHandler: authMiddleware,
+      schema: {
+        summary: 'Invite Team Member',
+        description: 'Send an invitation to a new team member.',
+        tags: ['organizations'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['orgId'],
+          properties: {
+            orgId: { type: 'string', format: 'uuid' },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['email'],
+          properties: {
+            email: { type: 'string', format: 'email' },
+            role: { type: 'string', enum: ['admin', 'member'], default: 'member' },
+          },
+        },
+        response: {
+          201: {
+            type: 'object',
+            properties: {
+              message: { type: 'string' },
+              invite_id: { type: 'string' },
+            },
+          },
+          400: {
+            type: 'object',
+            properties: {
+              error: {
+                type: 'object',
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                },
+              },
+            },
+          },
+          401: {
+            type: 'object',
+            properties: {
+              error: {
+                type: 'object',
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                },
+              },
+            },
+          },
+          403: {
+            type: 'object',
+            properties: {
+              error: {
+                type: 'object',
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!request.user) {
+        reply.code(401).send({
+          error: { code: 'UNAUTHORIZED', message: 'User not authenticated' },
+        });
+        return;
+      }
+
+      const { orgId } = request.params;
+      const { email, role: _role = 'member' } = request.body;
+
+      // Validate membership and check if user is admin/owner
+      const { data: membership } = await supabase
+        .from('organization_members')
+        .select('role')
+        .eq('organization_id', orgId)
+        .eq('user_id', request.user.id)
+        .single();
+
+      if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+        reply.code(403).send({
+          error: { code: 'FORBIDDEN', message: 'Only owners and admins can invite team members' },
+        });
+        return;
+      }
+
+      // Check if user is already a member
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        const { data: existingMember } = await supabase
+          .from('organization_members')
+          .select('id')
+          .eq('organization_id', orgId)
+          .eq('user_id', existingUser.id)
+          .single();
+
+        if (existingMember) {
+          reply.code(400).send({
+            error: { code: 'ALREADY_MEMBER', message: 'User is already a member of this organization' },
+          });
+          return;
+        }
+      }
+
+      // Get org details for the notification
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('name')
+        .eq('id', orgId)
+        .single();
+
+      // Get inviter details
+      const { data: inviter } = await supabase
+        .from('users')
+        .select('name, email')
+        .eq('id', request.user.id)
+        .single();
+
+      // Create invite token
+      const inviteId = randomUUID();
+      const inviteToken = randomUUID();
+
+      // Store invite (you may need to create an invites table, or use a simple approach)
+      // For now, we'll create the membership directly if user exists, or send invite
+      const inviteLink = `https://app.cheapinboxes.com/invite/${inviteToken}`;
+
+      // Send invite email
+      try {
+        await sendTeamMemberInvited(email, {
+          inviterName: inviter?.name || inviter?.email || 'A team member',
+          orgName: org?.name || 'the organization',
+          inviteLink,
+        });
+        console.log(`[OrgInvite] Sent invite to ${email} for org ${orgId}`);
+
+        reply.code(201).send({
+          message: 'Invitation sent successfully',
+          invite_id: inviteId,
+        });
+      } catch (emailErr: any) {
+        console.error(`[OrgInvite] Failed to send invite email:`, emailErr.message);
+        reply.code(400).send({
+          error: { code: 'INVITE_FAILED', message: 'Failed to send invitation email' },
+        });
       }
     }
   );

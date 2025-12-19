@@ -24,5 +24,5 @@ export function getSendingPlatformClient(platform: SendingPlatform): SendingPlat
   return client;
 }
 
-export { SendingPlatformClient, MailboxData } from './interface.js';
+export type { SendingPlatformClient, MailboxData } from './interface.js';
 

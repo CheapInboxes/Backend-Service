@@ -4,6 +4,7 @@ import { validateMembership } from '../services/orgService.js';
 import { supabase as supabaseAdmin } from '../clients/infrastructure/supabase.js';
 import { getSendingPlatformClient } from '../clients/sending-platforms/index.js';
 import { encryptCredentials, decryptCredentials, IntegrationCredentials } from '../utils/encryption.js';
+import { sendIntegrationConnected } from '../clients/notifications/index.js';
 
 // Types
 type SendingPlatform = 'instantly' | 'smartlead' | 'emailbison' | 'plusvibe';
@@ -673,6 +674,27 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
       const synced = results.filter((r) => r.success).length;
       const failed = results.filter((r) => !r.success).length;
+
+      // Send integration connected notification if any mailboxes were synced
+      if (synced > 0) {
+        try {
+          const { data: org } = await supabaseAdmin
+            .from('organizations')
+            .select('billing_email')
+            .eq('id', orgId)
+            .single();
+
+          if (org?.billing_email) {
+            await sendIntegrationConnected(org.billing_email, {
+              platformName: integration.provider.charAt(0).toUpperCase() + integration.provider.slice(1),
+              mailboxCount: synced,
+            });
+            console.log(`[IntegrationSync] Sent integration connected notification to ${org.billing_email}`);
+          }
+        } catch (emailErr: any) {
+          console.error(`[IntegrationSync] Failed to send notification:`, emailErr.message);
+        }
+      }
 
       return { synced, failed, results };
     }

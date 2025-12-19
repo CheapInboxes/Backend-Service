@@ -5,6 +5,7 @@ import { createUsageEvent } from './usageService.js';
 import * as namecheapClient from '../clients/domain-registrars/namecheap.js';
 import * as resellerclubClient from '../clients/domain-registrars/resellerclub/index.js';
 import * as cloudflareClient from '../clients/dns/cloudflare.js';
+import { sendDomainRegistered, sendProvisioningFailed } from '../clients/notifications/index.js';
 
 export async function createDomain(
   orgId: string,
@@ -179,6 +180,25 @@ export async function provisionDomain(runId: string): Promise<{
       throw new Error(`Failed to update run: ${runUpdateError?.message || 'Unknown error'}`);
     }
 
+    // Send domain registered notification
+    try {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('billing_email')
+        .eq('id', run.organization_id)
+        .single();
+
+      if (org?.billing_email) {
+        await sendDomainRegistered(org.billing_email, {
+          domain: domain.domain,
+          registrar: domain.source_provider === 'cheapinboxes' ? 'ResellerClub' : domain.source_provider,
+        });
+        console.log(`[DomainService] Sent domain registered notification for ${domain.domain}`);
+      }
+    } catch (emailErr: any) {
+      console.error(`[DomainService] Failed to send domain registered email:`, emailErr.message);
+    }
+
     return {
       updatedDomain: updatedDomain as Domain,
       updatedRun: updatedRun as DomainRun,
@@ -205,6 +225,26 @@ export async function provisionDomain(runId: string): Promise<{
         status: 'failed',
       })
       .eq('id', runId);
+
+    // Send provisioning failed notification
+    try {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('billing_email')
+        .eq('id', run.organization_id)
+        .single();
+
+      if (org?.billing_email) {
+        await sendProvisioningFailed(org.billing_email, {
+          domain: domain.domain,
+          mailboxCount: 0, // Domain-level failure, no mailboxes yet
+          reason: errorMessage,
+        });
+        console.log(`[DomainService] Sent provisioning failed notification for ${domain.domain}`);
+      }
+    } catch (emailErr: any) {
+      console.error(`[DomainService] Failed to send provisioning failed email:`, emailErr.message);
+    }
 
     throw error;
   }

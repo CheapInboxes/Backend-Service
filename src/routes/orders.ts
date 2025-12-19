@@ -7,6 +7,7 @@ import {
   getOrderByCheckoutSession,
   completeOrder,
   createOrderFromCheckout,
+  markOrderProvisioningComplete,
   type CartSnapshot,
   type MailboxConfig,
 } from '../services/orderService.js';
@@ -488,6 +489,71 @@ export async function orderRoutes(fastify: FastifyInstance) {
           return reply.code(404).send({ error: { code: 'NOT_FOUND', message } });
         }
         return reply.code(400).send({ error: { code: 'COMPLETE_FAILED', message } });
+      }
+    }
+  );
+
+  // ==================== Mark Provisioning Complete ====================
+
+  /**
+   * Mark order provisioning as complete (called by automation worker or admin)
+   * Sets domains to 'ready', mailboxes to 'active', and sends notification
+   */
+  fastify.post<{ Params: { orgId: string; orderId: string } }>(
+    '/orgs/:orgId/orders/:orderId/provisioning-complete',
+    {
+      preHandler: authMiddleware,
+      schema: {
+        description: 'Mark an order as provisioning complete. Updates domains/mailboxes to ready/active and sends notification.',
+        tags: ['orders'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['orgId', 'orderId'],
+          properties: {
+            orgId: { type: 'string', format: 'uuid' },
+            orderId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              order: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  status: { type: 'string' },
+                },
+              },
+              message: { type: 'string' },
+            },
+          },
+          400: { $ref: 'ApiError' },
+          401: { $ref: 'ApiError' },
+          404: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!request.user) {
+        return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'User not authenticated' } });
+      }
+
+      const { orderId } = request.params;
+
+      try {
+        const order = await markOrderProvisioningComplete(orderId);
+        return {
+          order: { id: order.id, status: order.status },
+          message: 'Provisioning marked complete. Notification sent.',
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        if (message === 'Order not found') {
+          return reply.code(404).send({ error: { code: 'NOT_FOUND', message } });
+        }
+        return reply.code(400).send({ error: { code: 'PROVISIONING_COMPLETE_FAILED', message } });
       }
     }
   );

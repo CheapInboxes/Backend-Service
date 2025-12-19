@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { verifyWebhookSignature } from '../clients/infrastructure/stripe.js';
 import { updatePaymentStatus, updateInvoiceStatus } from '../services/billingService.js';
 import { createOrderFromCheckout } from '../services/orderService.js';
+import { sendPaymentFailed } from '../clients/notifications/index.js';
 import type Stripe from 'stripe';
 
 export async function webhookRoutes(fastify: FastifyInstance) {
@@ -70,6 +71,24 @@ export async function webhookRoutes(fastify: FastifyInstance) {
             const invoice = event.data.object as Stripe.Invoice;
             console.log(`Invoice payment failed: ${invoice.id}`);
             // Keep status as 'open' - customer can retry
+            
+            // Send payment failed notification
+            try {
+              const customerEmail = invoice.customer_email;
+              if (customerEmail) {
+                const amount = (invoice.amount_due || 0) / 100;
+                const nextRetry = invoice.next_payment_attempt 
+                  ? new Date(invoice.next_payment_attempt * 1000).toLocaleDateString('en-US', { 
+                      month: 'long', day: 'numeric', year: 'numeric' 
+                    })
+                  : undefined;
+                
+                await sendPaymentFailed(customerEmail, { amount, nextRetryDate: nextRetry });
+                console.log(`[Webhook] Payment failed email sent to ${customerEmail}`);
+              }
+            } catch (emailError) {
+              console.error('[Webhook] Failed to send payment failed email:', emailError);
+            }
             break;
           }
 

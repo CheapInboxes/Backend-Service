@@ -1,4 +1,5 @@
 import { supabase, supabaseAnon } from '../clients/infrastructure/supabase.js';
+import { sendWelcome } from '../clients/notifications/index.js';
 import { User, Organization } from '../types/index.js';
 
 export async function syncUser(
@@ -96,6 +97,11 @@ export async function signUp(
   if (signInError || !signInData.session) {
     throw new Error(`Failed to create session: ${signInError?.message || 'Unknown error'}`);
   }
+
+  // Send welcome email (fire and forget - don't block signup)
+  sendWelcome(email, { name })
+    .then(() => console.log(`[Auth] Welcome email sent to ${email}`))
+    .catch((err) => console.error(`[Auth] Failed to send welcome email:`, err));
 
   return {
     user,
