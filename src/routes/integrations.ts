@@ -3,7 +3,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { validateMembership } from '../services/orgService.js';
 import { supabase as supabaseAdmin } from '../clients/infrastructure/supabase.js';
 import { getSendingPlatformClient } from '../clients/sending-platforms/index.js';
-import { encryptCredentials, decryptCredentials, IntegrationCredentials } from '../utils/encryption.js';
+import { encryptCredentials, decryptCredentials, getIntegrationCredentials, IntegrationCredentials } from '../utils/encryption.js';
 import { sendIntegrationConnected } from '../clients/notifications/index.js';
 
 // Types
@@ -342,14 +342,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
       const updates: Record<string, any> = {};
 
-      // Decrypt existing credentials
-      let existingCredentials: IntegrationCredentials;
-      try {
-        existingCredentials = decryptCredentials(existing.credential_ref);
-      } catch {
-        // If decryption fails, credentials might be in old plain-text format
-        existingCredentials = { api_key: existing.credential_ref, base_url: existing.base_url };
-      }
+      // Get existing decrypted credentials
+      const existingCredentials = getIntegrationCredentials(existing);
 
       // If updating API key or base_url, validate and re-encrypt
       if (api_key || base_url) {
@@ -604,13 +598,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       // Decrypt credentials
-      let credentials: IntegrationCredentials;
-      try {
-        credentials = decryptCredentials(integration.credential_ref);
-      } catch {
-        // Fallback for old plain-text format
-        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
-      }
+      // Get decrypted credentials
+      const credentials = getIntegrationCredentials(integration);
 
       // Sync each mailbox to the platform
       const client = getSendingPlatformClient(integration.provider as SendingPlatform);
@@ -801,12 +790,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       // Decrypt credentials
-      let credentials: IntegrationCredentials;
-      try {
-        credentials = decryptCredentials(integration.credential_ref);
-      } catch {
-        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
-      }
+      // Get decrypted credentials
+      const credentials = getIntegrationCredentials(integration);
 
       // Sync to platform
       try {
@@ -940,12 +925,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       // Decrypt credentials
-      let credentials: IntegrationCredentials;
-      try {
-        credentials = decryptCredentials(integration.credential_ref);
-      } catch {
-        credentials = { api_key: integration.credential_ref, base_url: integration.base_url };
-      }
+      // Get decrypted credentials
+      const credentials = getIntegrationCredentials(integration);
 
       // Remove from platform
       try {

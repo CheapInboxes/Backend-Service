@@ -2459,8 +2459,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        // Import the sending platform client dynamically
+        // Import the sending platform client and encryption utilities dynamically
         const { getSendingPlatformClient } = await import('../clients/sending-platforms/index.js');
+        const { getIntegrationCredentials } = await import('../utils/encryption.js');
 
         // Get integration with credentials
         const { data: integration, error } = await supabase
@@ -2483,8 +2484,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
           return { success: false, message: `Unknown provider: ${integration.provider}`, status: integration.status };
         }
 
+        // Get decrypted credentials
+        const credentials = getIntegrationCredentials(integration);
+
         // Test the connection
-        const isValid = await client.validateApiKey(integration.api_key, integration.base_url);
+        const isValid = await client.validateApiKey(credentials.api_key, credentials.base_url);
 
         // Update status if changed
         const newStatus = isValid ? 'active' : 'invalid';

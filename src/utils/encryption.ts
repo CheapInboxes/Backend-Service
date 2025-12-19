@@ -88,3 +88,22 @@ export function generateEncryptionKey(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/**
+ * Get decrypted credentials from an integration record.
+ * Handles both encrypted format and legacy plain-text format.
+ * @param integration - The integration record with credential_ref
+ * @returns The decrypted credentials
+ */
+export function getIntegrationCredentials(
+  integration: { credential_ref: string }
+): IntegrationCredentials {
+  try {
+    return decryptCredentials(integration.credential_ref);
+  } catch {
+    // Fallback for old plain-text format (api_key stored directly, no base_url)
+    return {
+      api_key: integration.credential_ref,
+    };
+  }
+}
+
