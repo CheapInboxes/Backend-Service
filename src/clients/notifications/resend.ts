@@ -1,11 +1,16 @@
 import { Resend } from 'resend';
 import { env } from '../../config/env.js';
 
-// Initialize Resend client
-const resend = new Resend(env.RESEND_API_KEY);
+// Initialize Resend client (may be null if not configured)
+const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
 
 // Default sender
 const defaultFrom = `${env.RESEND_FROM_NAME} <${env.RESEND_FROM_EMAIL}>`;
+
+// Log warning if Resend is not configured
+if (!resend) {
+  console.warn('[Resend] RESEND_API_KEY not configured - emails will be skipped');
+}
 
 // ============================================================
 // Core Send Function
@@ -23,6 +28,12 @@ export interface SendEmailOptions {
 
 export async function sendEmail(options: SendEmailOptions): Promise<{ id: string }> {
   const { to, subject, html, text, from, replyTo, tags } = options;
+
+  // Skip if Resend is not configured
+  if (!resend) {
+    console.warn(`[Resend] Skipped email "${subject}" to ${Array.isArray(to) ? to.join(', ') : to} - RESEND_API_KEY not configured`);
+    return { id: 'skipped-no-api-key' };
+  }
 
   const { data, error } = await resend.emails.send({
     from: from || defaultFrom,

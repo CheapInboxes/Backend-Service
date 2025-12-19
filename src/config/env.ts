@@ -23,8 +23,8 @@ const envSchema = z.object({
   AUTOMATION_SERVICE_API_KEY: z.string().min(32, 'AUTOMATION_SERVICE_API_KEY must be at least 32 characters'),
   // Credentials Encryption
   CREDENTIALS_ENCRYPTION_KEY: z.string().min(32, 'CREDENTIALS_ENCRYPTION_KEY must be at least 32 characters'),
-  // Resend (Email Notifications)
-  RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
+  // Resend (Email Notifications) - optional, emails will be skipped if not configured
+  RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().email().default('noreply@cheapinboxes.com'),
   RESEND_FROM_NAME: z.string().default('CheapInboxes'),
 });
