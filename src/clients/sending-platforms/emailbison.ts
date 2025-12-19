@@ -1,7 +1,7 @@
 // EmailBison client for email sending platform integration
 // API Docs: https://docs.emailbison.com/
 
-import { SendingPlatformClient, MailboxData } from './interface.js';
+import { SendingPlatformClient, MailboxData, ValidationResult } from './interface.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -27,10 +27,10 @@ function getApiUrl(baseUrl: string): string {
 }
 
 class EmailBisonClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string, baseUrl?: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, baseUrl?: string): Promise<ValidationResult> {
     if (!baseUrl) {
       console.log('[EmailBison] No base URL provided, cannot validate');
-      return false;
+      return { valid: false, error: 'No base URL provided. EmailBison requires a custom instance URL.' };
     }
     
     try {
@@ -42,10 +42,24 @@ class EmailBisonClient implements SendingPlatformClient {
           'Content-Type': 'application/json',
         },
       });
-      return response.ok;
+      
+      if (response.ok) {
+        return { valid: true };
+      }
+      
+      // Try to get error message from response
+      try {
+        const data = await response.json() as { data?: { message?: string } };
+        const errorMessage = data?.data?.message || `API returned status ${response.status}`;
+        console.log(`[EmailBison] Validation failed: ${errorMessage}`);
+        return { valid: false, error: errorMessage };
+      } catch {
+        return { valid: false, error: `API returned status ${response.status}` };
+      }
     } catch (error) {
-      console.error('[EmailBison] Validation error:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error';
+      console.error('[EmailBison] Validation error:', errorMessage);
+      return { valid: false, error: `Network error: ${errorMessage}` };
     }
   }
 

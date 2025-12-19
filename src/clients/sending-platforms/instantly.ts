@@ -1,14 +1,14 @@
 // Instantly.ai client for email sending platform integration
 // API Docs: https://developer.instantly.ai/
 
-import { SendingPlatformClient, MailboxData } from './interface.js';
+import { SendingPlatformClient, MailboxData, ValidationResult } from './interface.js';
 
 const INSTANTLY_API_BASE = 'https://api.instantly.ai/api/v2';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class InstantlyClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<ValidationResult> {
     try {
       // Use the accounts endpoint to validate the key (API V2 uses Bearer auth)
       const response = await fetch(`${INSTANTLY_API_BASE}/accounts?limit=1`, {
@@ -17,9 +17,24 @@ class InstantlyClient implements SendingPlatformClient {
           'Content-Type': 'application/json',
         },
       });
-      return response.ok;
-    } catch {
-      return false;
+      
+      if (response.ok) {
+        return { valid: true };
+      }
+      
+      // Try to get error message from response
+      try {
+        const data = await response.json() as { message?: string; error?: string };
+        const errorMessage = data?.message || data?.error || `API returned status ${response.status}`;
+        console.log(`[Instantly] Validation failed: ${errorMessage}`);
+        return { valid: false, error: errorMessage };
+      } catch {
+        return { valid: false, error: `API returned status ${response.status}` };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error';
+      console.error('[Instantly] Validation error:', errorMessage);
+      return { valid: false, error: `Network error: ${errorMessage}` };
     }
   }
 

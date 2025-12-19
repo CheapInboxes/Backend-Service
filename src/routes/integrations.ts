@@ -204,20 +204,13 @@ export async function integrationRoutes(fastify: FastifyInstance) {
       }
 
       // Validate API key with the platform
-      try {
-        const client = getSendingPlatformClient(provider);
-        const isValid = await client.validateApiKey(api_key, base_url);
-        if (!isValid) {
-          reply.code(400).send({
-            error: { code: 'INVALID_API_KEY', message: `Invalid API key for ${provider}` },
-          });
-          return;
-        }
-      } catch (err) {
+      const client = getSendingPlatformClient(provider);
+      const validationResult = await client.validateApiKey(api_key, base_url);
+      if (!validationResult.valid) {
         reply.code(400).send({
-          error: {
-            code: 'VALIDATION_FAILED',
-            message: `Could not validate API key: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          error: { 
+            code: 'INVALID_API_KEY', 
+            message: validationResult.error || `Invalid API key for ${provider}` 
           },
         });
         return;
@@ -351,20 +344,13 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         const newBaseUrl = base_url || existingCredentials.base_url;
 
         // Validate the new API key
-        try {
-          const client = getSendingPlatformClient(existing.provider as SendingPlatform);
-          const isValid = await client.validateApiKey(newApiKey, newBaseUrl);
-          if (!isValid) {
-            reply.code(400).send({
-              error: { code: 'INVALID_API_KEY', message: `Invalid API key for ${existing.provider}` },
-            });
-            return;
-          }
-        } catch (err) {
+        const client = getSendingPlatformClient(existing.provider as SendingPlatform);
+        const validationResult = await client.validateApiKey(newApiKey, newBaseUrl);
+        if (!validationResult.valid) {
           reply.code(400).send({
-            error: {
-              code: 'VALIDATION_FAILED',
-              message: `Could not validate API key: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            error: { 
+              code: 'INVALID_API_KEY', 
+              message: validationResult.error || `Invalid API key for ${existing.provider}` 
             },
           });
           return;

@@ -7,13 +7,19 @@ export interface MailboxData {
   profilePictureUrl?: string;
 }
 
+export interface ValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
 export interface SendingPlatformClient {
   /**
    * Validate that an API key is valid for this platform
    * @param apiKey - The API key to validate
    * @param baseUrl - Optional custom base URL (used by EmailBison for dedicated instances)
+   * @returns ValidationResult with valid flag and optional error message
    */
-  validateApiKey(apiKey: string, baseUrl?: string): Promise<boolean>;
+  validateApiKey(apiKey: string, baseUrl?: string): Promise<ValidationResult>;
 
   /**
    * Add a mailbox to the sending platform

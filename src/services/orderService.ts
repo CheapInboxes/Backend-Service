@@ -367,6 +367,10 @@ export async function createOrderFromCheckout(
     await createSubscriptionsFromOrder(order.id, order.organization_id, cart, createdDomains);
   }
 
+  // Recalculate all subscription prices based on new total mailbox count
+  // This ensures existing subscriptions get volume pricing updates
+  await recalculateOrgSubscriptionPricing(order.organization_id);
+
   // Update order status to pending_config (ready for wizard)
   const { data: updatedOrder, error: updateError } = await supabase
     .from('orders')
@@ -589,6 +593,64 @@ async function createSubscriptionsFromOrder(
     }
   } catch (error) {
     console.error('Error creating subscriptions from order:', error);
+  }
+}
+
+/**
+ * Recalculate subscription pricing for all active subscriptions in an organization
+ * Called after new orders to apply volume pricing updates to existing subscriptions
+ * 
+ * This ensures that when a customer adds more mailboxes, all their existing
+ * subscriptions get the new volume-discounted price.
+ */
+export async function recalculateOrgSubscriptionPricing(orgId: string): Promise<void> {
+  try {
+    // Get total mailbox count for the org (for volume pricing)
+    const totalMailboxCount = await getTotalMailboxCount(orgId, 0);
+    
+    if (totalMailboxCount === 0) {
+      console.log(`[Pricing] No mailboxes for org ${orgId}, skipping recalculation`);
+      return;
+    }
+
+    // Calculate new volume price
+    const newPriceCents = getMailboxPriceForQuantity(totalMailboxCount);
+    console.log(`[Pricing] Recalculating for org ${orgId}: ${totalMailboxCount} mailboxes → $${(newPriceCents / 100).toFixed(2)}/mailbox`);
+
+    // Get all active subscriptions for this org
+    const { data: subscriptions, error: subError } = await supabase
+      .from('subscriptions')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('status', 'active');
+
+    if (subError || !subscriptions || subscriptions.length === 0) {
+      console.log(`[Pricing] No active subscriptions for org ${orgId}`);
+      return;
+    }
+
+    const subscriptionIds = subscriptions.map(s => s.id);
+
+    // Update all subscription items with mailbox codes to the new price
+    const mailboxCodes = Object.values(MAILBOX_PRICEBOOK_CODES);
+    
+    const { data: updatedItems, error: updateError } = await supabase
+      .from('subscription_items')
+      .update({ unit_price_cents: newPriceCents })
+      .in('subscription_id', subscriptionIds)
+      .in('code', mailboxCodes)
+      .select();
+
+    if (updateError) {
+      console.error(`[Pricing] Failed to update subscription items:`, updateError);
+      return;
+    }
+
+    const updatedCount = updatedItems?.length || 0;
+    console.log(`[Pricing] Updated ${updatedCount} subscription items for org ${orgId}`);
+  } catch (error) {
+    console.error('[Pricing] Error recalculating subscription pricing:', error);
+    // Don't throw - this is a non-critical operation
   }
 }
 

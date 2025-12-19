@@ -2488,10 +2488,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
         const credentials = getIntegrationCredentials(integration);
 
         // Test the connection
-        const isValid = await client.validateApiKey(credentials.api_key, credentials.base_url);
+        const result = await client.validateApiKey(credentials.api_key, credentials.base_url);
 
         // Update status if changed
-        const newStatus = isValid ? 'active' : 'invalid';
+        const newStatus = result.valid ? 'active' : 'invalid';
         if (integration.status !== newStatus) {
           await supabase
             .from('integrations')
@@ -2500,8 +2500,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
         }
 
         return {
-          success: isValid,
-          message: isValid ? 'Connection successful' : 'Connection failed - API key may be invalid',
+          success: result.valid,
+          message: result.valid ? 'Connection successful' : (result.error || 'Connection failed'),
           status: newStatus,
         };
       } catch (error) {

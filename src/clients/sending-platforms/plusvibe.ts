@@ -1,13 +1,13 @@
 // PlusVibe client for email sending platform integration
 
-import { SendingPlatformClient, MailboxData } from './interface.js';
+import { SendingPlatformClient, MailboxData, ValidationResult } from './interface.js';
 
-const PLUSVIBE_API_BASE = 'https://api.plusvibe.com/v1';
+const PLUSVIBE_API_BASE = 'https://api.plusvibe.ai/v1';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class PlusVibeClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<ValidationResult> {
     try {
       // Validate key with a simple API call
       const response = await fetch(`${PLUSVIBE_API_BASE}/email-accounts`, {
@@ -16,10 +16,24 @@ class PlusVibeClient implements SendingPlatformClient {
           'Content-Type': 'application/json',
         },
       });
-      return response.ok;
+      
+      if (response.ok) {
+        return { valid: true };
+      }
+      
+      // Try to get error message from response
+      try {
+        const data = await response.json() as { message?: string; error?: string };
+        const errorMessage = data?.message || data?.error || `API returned status ${response.status}`;
+        console.log(`[PlusVibe] Validation failed: ${errorMessage}`);
+        return { valid: false, error: errorMessage };
+      } catch {
+        return { valid: false, error: `API returned status ${response.status}` };
+      }
     } catch (error) {
-      console.error('[PlusVibe] Validation error:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error';
+      console.error('[PlusVibe] Validation error:', errorMessage);
+      return { valid: false, error: `Network error: ${errorMessage}` };
     }
   }
 

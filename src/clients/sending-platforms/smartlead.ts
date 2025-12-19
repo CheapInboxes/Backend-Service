@@ -1,20 +1,35 @@
 // Smartlead.ai client for email sending platform integration
 // API Docs: https://api.smartlead.ai/docs
 
-import { SendingPlatformClient, MailboxData } from './interface.js';
+import { SendingPlatformClient, MailboxData, ValidationResult } from './interface.js';
 
 const SMARTLEAD_API_BASE = 'https://server.smartlead.ai/api/v1';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class SmartleadClient implements SendingPlatformClient {
-  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<boolean> {
+  async validateApiKey(apiKey: string, _baseUrl?: string): Promise<ValidationResult> {
     try {
       // Use a simple endpoint to validate the key
       const response = await fetch(`${SMARTLEAD_API_BASE}/email-accounts?api_key=${apiKey}&limit=1`);
-      return response.ok;
-    } catch {
-      return false;
+      
+      if (response.ok) {
+        return { valid: true };
+      }
+      
+      // Try to get error message from response
+      try {
+        const data = await response.json() as { message?: string; error?: string };
+        const errorMessage = data?.message || data?.error || `API returned status ${response.status}`;
+        console.log(`[Smartlead] Validation failed: ${errorMessage}`);
+        return { valid: false, error: errorMessage };
+      } catch {
+        return { valid: false, error: `API returned status ${response.status}` };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error';
+      console.error('[Smartlead] Validation error:', errorMessage);
+      return { valid: false, error: `Network error: ${errorMessage}` };
     }
   }
 
