@@ -2491,7 +2491,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
         if (integration.status !== newStatus) {
           await supabase
             .from('integrations')
-            .update({ status: newStatus, updated_at: new Date().toISOString() })
+            .update({ status: newStatus })
             .eq('id', integration.id);
         }
 
