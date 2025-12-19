@@ -3,7 +3,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { validateMembership } from '../services/orgService.js';
 import { supabase as supabaseAdmin } from '../clients/infrastructure/supabase.js';
 import { getSendingPlatformClient } from '../clients/sending-platforms/index.js';
-import { encryptCredentials, decryptCredentials, getIntegrationCredentials, IntegrationCredentials } from '../utils/encryption.js';
+import { encryptCredentials, getIntegrationCredentials, IntegrationCredentials } from '../utils/encryption.js';
 import { sendIntegrationConnected } from '../clients/notifications/index.js';
 
 // Types
