@@ -407,9 +407,14 @@ async function createOrderInvoiceAndPayment(
     const paymentIntent = session.payment_intent as Stripe.PaymentIntent | null;
     const charge = paymentIntent?.latest_charge as Stripe.Charge | null;
 
-    // Calculate total in cents
+    // Calculate total mailbox count for volume pricing FIRST
+    const totalMailboxesInCart = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+    const totalMailboxCount = await getTotalMailboxCount(orgId, totalMailboxesInCart);
+    const volumeMailboxPrice = getMailboxPriceForQuantity(totalMailboxCount);
+
+    // Calculate total in cents using volume pricing (matches what Stripe charged)
     const domainTotalCents = Math.round(cart.totals.domainTotal * 100);
-    const mailboxTotalCents = Math.round(cart.totals.mailboxMonthly * 100);
+    const mailboxTotalCents = volumeMailboxPrice * totalMailboxesInCart;
     const totalCents = domainTotalCents + mailboxTotalCents;
 
     // Create invoice for the order
@@ -437,11 +442,6 @@ async function createOrderInvoiceAndPayment(
     // Create invoice items for audit trail
     const invoiceItems: any[] = [];
     const todayStr = today.toISOString().split('T')[0];
-
-    // Calculate total mailbox count for volume pricing
-    const totalMailboxesInCart = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
-    const totalMailboxCount = await getTotalMailboxCount(orgId, totalMailboxesInCart);
-    const volumeMailboxPrice = getMailboxPriceForQuantity(totalMailboxCount);
 
     // Add domain line items
     for (const domain of cart.domains) {
