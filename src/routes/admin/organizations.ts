@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { internalAuthMiddleware, requirePermission } from '../../middleware/internalAuth.js';
 import { supabase } from '../../clients/infrastructure/supabase.js';
 import { getOrders } from '../../services/orderService.js';
+import { getPaymentMethods } from '../../services/billingService.js';
 import { handleError, parsePagination, paginationQuerySchema } from './helpers.js';
 
 export async function organizationsRoutes(fastify: FastifyInstance) {
@@ -203,6 +204,172 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
         };
       } catch (error) {
         return handleError(reply, 'ORG_FETCH_FAILED', error);
+      }
+    }
+  );
+
+  /**
+   * Get full organization details (all data in one call for SSR)
+   */
+  fastify.get<{
+    Params: { id: string };
+  }>(
+    '/admin/organizations/:id/full',
+    {
+      preHandler: [internalAuthMiddleware, requirePermission('view:organizations')],
+      schema: {
+        description: 'Get complete organization details including all related data in one call (admin only). Optimized for server-side rendering.',
+        tags: ['admin'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              organization: { type: 'object' },
+              members: { type: 'array' },
+              domains: { type: 'array' },
+              mailboxes: { type: 'array' },
+              integrations: { type: 'array' },
+              orders: { type: 'array' },
+              subscriptions: { type: 'array' },
+              invoices: { type: 'array' },
+              payments: { type: 'array' },
+              payment_methods: { type: 'array' },
+            },
+          },
+          401: { $ref: 'ApiError' },
+          403: { $ref: 'ApiError' },
+          404: { $ref: 'ApiError' },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const orgId = request.params.id;
+
+        // First fetch org to verify it exists and get stripe_customer_id
+        const { data: org, error: orgError } = await supabase
+          .from('organizations')
+          .select('*')
+          .eq('id', orgId)
+          .single();
+
+        if (orgError || !org) {
+          return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        }
+
+        // Run all queries in parallel
+        const [
+          membersResult,
+          domainsResult,
+          mailboxesResult,
+          integrationsResult,
+          orders,
+          subscriptionsResult,
+          invoicesResult,
+          paymentsResult,
+          paymentMethods,
+        ] = await Promise.all([
+          supabase
+            .from('organization_members')
+            .select('*, users(email, name)')
+            .eq('organization_id', orgId),
+          supabase
+            .from('domains')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('mailboxes')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('integrations')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false }),
+          getOrders(orgId),
+          supabase
+            .from('subscriptions')
+            .select(`
+              *,
+              domains(domain),
+              subscription_items(id, code, quantity, unit_price_cents)
+            `)
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('invoices')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('payments')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('processed_at', { ascending: false }),
+          org.stripe_customer_id ? getPaymentMethods(orgId) : Promise.resolve([]),
+        ]);
+
+        // Transform subscriptions to include calculated monthly amount
+        const subscriptions = (subscriptionsResult.data || []).map((sub: any) => {
+          const items = sub.subscription_items || [];
+          const monthlyAmount = items.reduce(
+            (sum: number, item: any) => sum + item.quantity * item.unit_price_cents,
+            0
+          );
+          return {
+            id: sub.id,
+            organization_id: sub.organization_id,
+            order_id: sub.order_id,
+            domain_id: sub.domain_id,
+            status: sub.status,
+            billing_anchor_day: sub.billing_anchor_day,
+            next_billing_date: sub.next_billing_date,
+            created_at: sub.created_at,
+            cancelled_at: sub.cancelled_at,
+            domain: sub.domains,
+            items: items,
+            monthly_amount_cents: monthlyAmount,
+          };
+        });
+
+        // Transform payment methods
+        const formattedPaymentMethods = paymentMethods.map((pm: any) => ({
+          id: pm.id,
+          type: pm.type,
+          card: pm.card
+            ? {
+                brand: pm.card.brand,
+                last4: pm.card.last4,
+                exp_month: pm.card.exp_month,
+                exp_year: pm.card.exp_year,
+              }
+            : null,
+        }));
+
+        return {
+          organization: org,
+          members: membersResult.data || [],
+          domains: domainsResult.data || [],
+          mailboxes: mailboxesResult.data || [],
+          integrations: integrationsResult.data || [],
+          orders,
+          subscriptions,
+          invoices: invoicesResult.data || [],
+          payments: paymentsResult.data || [],
+          payment_methods: formattedPaymentMethods,
+        };
+      } catch (error) {
+        return handleError(reply, 'ORG_FULL_FETCH_FAILED', error);
       }
     }
   );
