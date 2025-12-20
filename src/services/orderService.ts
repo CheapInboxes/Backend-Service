@@ -391,15 +391,28 @@ export async function createOrderFromCheckout(
       .eq('id', order.organization_id)
       .single();
 
+    // Get receipt URL from payment record
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('receipt_url')
+      .eq('order_id', order.id)
+      .single();
+
     if (org?.billing_email) {
-      const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
       const totalAmount = cart.totals.domainTotal + cart.totals.mailboxMonthly;
+      
+      // Build domains list for email
+      const domains = cart.domains.map(d => ({
+        domain: d.domain,
+        mailboxCount: d.mailboxes.count,
+        provider: d.mailboxes.provider === 'google' ? 'Google' : 'Microsoft',
+      }));
       
       await sendOrderConfirmation(org.billing_email, {
         orderId: order.id,
-        domainCount: cart.domains.length,
-        mailboxCount: totalMailboxes,
+        domains,
         totalAmount,
+        receiptUrl: payment?.receipt_url || undefined,
       });
       console.log(`[Order] Confirmation email sent to ${org.billing_email} for order ${order.id}`);
     }

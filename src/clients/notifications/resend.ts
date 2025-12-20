@@ -65,11 +65,33 @@ export async function sendOrderConfirmation(
   to: string,
   data: {
     orderId: string;
-    domainCount: number;
-    mailboxCount: number;
+    domains: Array<{ domain: string; mailboxCount: number; provider: string }>;
     totalAmount: number;
+    receiptUrl?: string;
   }
 ): Promise<{ id: string }> {
+  const domainCount = data.domains.length;
+  const mailboxCount = data.domains.reduce((sum, d) => sum + d.mailboxCount, 0);
+  
+  // Build domain list HTML
+  const domainListHtml = data.domains.map(d => `
+    <tr>
+      <td style="padding: 8px 0; border-bottom: 1px solid #e4e4e7; color: #18181b; font-size: 14px;">${d.domain}</td>
+      <td style="padding: 8px 0; border-bottom: 1px solid #e4e4e7; color: #52525b; font-size: 14px; text-align: right;">${d.mailboxCount} ${d.provider} mailbox${d.mailboxCount !== 1 ? 'es' : ''}</td>
+    </tr>
+  `).join('');
+
+  // Build domain list text
+  const domainListText = data.domains.map(d => `  - ${d.domain}: ${d.mailboxCount} ${d.provider} mailbox(es)`).join('\n');
+
+  const receiptButton = data.receiptUrl ? `
+    <a href="${data.receiptUrl}" style="display: inline-block; background: #18181b; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-top: 16px;">
+      View Receipt
+    </a>
+  ` : '';
+
+  const receiptText = data.receiptUrl ? `\nView receipt: ${data.receiptUrl}` : '';
+
   return sendEmail({
     to,
     subject: 'Order Confirmed - CheapInboxes',
@@ -80,12 +102,25 @@ export async function sendOrderConfirmation(
           Thanks for your order! We're setting everything up for you.
         </p>
         <div style="background: #f4f4f5; border-radius: 8px; padding: 20px; margin: 24px 0;">
-          <p style="margin: 0 0 8px 0; color: #71717a; font-size: 14px;">Order #${data.orderId.slice(0, 8)}</p>
-          <p style="margin: 0 0 4px 0; color: #18181b; font-size: 16px;"><strong>${data.domainCount}</strong> domain${data.domainCount !== 1 ? 's' : ''}</p>
-          <p style="margin: 0 0 4px 0; color: #18181b; font-size: 16px;"><strong>${data.mailboxCount}</strong> mailbox${data.mailboxCount !== 1 ? 'es' : ''}</p>
-          <p style="margin: 16px 0 0 0; color: #18181b; font-size: 20px; font-weight: 600;">$${data.totalAmount.toFixed(2)}</p>
+          <p style="margin: 0 0 16px 0; color: #71717a; font-size: 14px;">Order #${data.orderId.slice(0, 8)}</p>
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr>
+                <th style="padding: 8px 0; border-bottom: 2px solid #d4d4d8; color: #71717a; font-size: 12px; text-align: left; font-weight: 500;">DOMAIN</th>
+                <th style="padding: 8px 0; border-bottom: 2px solid #d4d4d8; color: #71717a; font-size: 12px; text-align: right; font-weight: 500;">MAILBOXES</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${domainListHtml}
+            </tbody>
+          </table>
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 2px solid #d4d4d8;">
+            <p style="margin: 0; color: #71717a; font-size: 14px;">Total: <strong>${domainCount}</strong> domain${domainCount !== 1 ? 's' : ''}, <strong>${mailboxCount}</strong> mailbox${mailboxCount !== 1 ? 'es' : ''}</p>
+            <p style="margin: 8px 0 0 0; color: #18181b; font-size: 20px; font-weight: 600;">$${data.totalAmount.toFixed(2)}</p>
+          </div>
         </div>
-        <p style="color: #52525b; font-size: 16px; line-height: 1.6;">
+        ${receiptButton}
+        <p style="color: #52525b; font-size: 16px; line-height: 1.6; margin-top: 24px;">
           You'll receive another email once your mailboxes are ready to use.
         </p>
         <p style="color: #71717a; font-size: 14px; margin-top: 32px;">
@@ -93,7 +128,7 @@ export async function sendOrderConfirmation(
         </p>
       </div>
     `,
-    text: `Order Confirmed\n\nThanks for your order!\n\nOrder #${data.orderId.slice(0, 8)}\n${data.domainCount} domain(s)\n${data.mailboxCount} mailbox(es)\nTotal: $${data.totalAmount.toFixed(2)}\n\nYou'll receive another email once your mailboxes are ready.`,
+    text: `Order Confirmed\n\nThanks for your order!\n\nOrder #${data.orderId.slice(0, 8)}\n\nDomains:\n${domainListText}\n\nTotal: ${domainCount} domain(s), ${mailboxCount} mailbox(es)\nAmount: $${data.totalAmount.toFixed(2)}${receiptText}\n\nYou'll receive another email once your mailboxes are ready.`,
     tags: [{ name: 'type', value: 'order_confirmation' }],
   });
 }
