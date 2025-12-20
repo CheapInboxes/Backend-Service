@@ -14,6 +14,8 @@ export interface CartDomain {
     provider: 'google' | 'microsoft';
     count: number;
   };
+  isExisting?: boolean; // true if domain is already owned (imported), not being purchased
+  domainId?: string; // ID of existing domain in database
 }
 
 export interface CartSnapshot {
@@ -165,16 +167,20 @@ export async function createCheckoutSession(
   // Group domains by price to avoid Stripe's 100 line item limit
   const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
-  // Group domains by price (in cents) to create aggregate line items
+  // Separate new domains (being purchased) from existing domains (already owned)
+  const newDomains = cart.domains.filter(d => !d.isExisting);
+  const existingDomains = cart.domains.filter(d => d.isExisting);
+
+  // Group NEW domains by price (in cents) to create aggregate line items
   const domainsByPrice = new Map<number, CartDomain[]>();
-  for (const domain of cart.domains) {
+  for (const domain of newDomains) {
     const priceInCents = Math.round(domain.price * 100);
-    const existing = domainsByPrice.get(priceInCents) || [];
-    existing.push(domain);
-    domainsByPrice.set(priceInCents, existing);
+    const domainsAtPrice = domainsByPrice.get(priceInCents) || [];
+    domainsAtPrice.push(domain);
+    domainsByPrice.set(priceInCents, domainsAtPrice);
   }
 
-  // Add domain line items (grouped by price)
+  // Add domain line items for NEW domains (grouped by price)
   for (const [priceInCents, domains] of domainsByPrice) {
     const count = domains.length;
     const priceFormatted = (priceInCents / 100).toFixed(2);
@@ -197,6 +203,30 @@ export async function createCheckoutSession(
           description,
         },
         unit_amount: priceInCents,
+      },
+      quantity: count,
+    });
+  }
+
+  // Add $0 line item for EXISTING domains (already owned, no registration fee)
+  if (existingDomains.length > 0) {
+    const count = existingDomains.length;
+    const name = count === 1
+      ? `Imported: ${existingDomains[0].domain}`
+      : `Imported Domains (${count})`;
+    
+    const description = count === 1
+      ? `Already owned - no registration fee`
+      : `Already owned: ${existingDomains.map(d => d.domain).slice(0, 5).join(', ')}${count > 5 ? ` +${count - 5} more` : ''}`;
+
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name,
+          description,
+        },
+        unit_amount: 0, // No charge for existing domains
       },
       quantity: count,
     });
@@ -308,8 +338,15 @@ export async function createOrderFromCheckout(
       .eq('id', order.id);
   }
 
-  // Create domains and mailboxes from cart (batch inserts for performance)
-  const domainInserts = cart.domains.map(cartDomain => ({
+  // Separate cart domains into new vs existing
+  const newCartDomains = cart.domains.filter(d => !d.isExisting);
+  const existingCartDomains = cart.domains.filter(d => d.isExisting);
+  
+  let allDomains: any[] = [];
+
+  // Create NEW domains (domains being purchased)
+  if (newCartDomains.length > 0) {
+    const domainInserts = newCartDomains.map(cartDomain => ({
     organization_id: order.organization_id,
     order_id: order.id,
     domain: cartDomain.domain,
@@ -324,15 +361,49 @@ export async function createOrderFromCheckout(
 
   if (domainsError) {
     console.error('Failed to create domains:', domainsError);
+    } else if (createdDomains) {
+      allDomains = allDomains.concat(createdDomains);
+    }
   }
 
-  // Create mailbox records for each domain
-  if (createdDomains && createdDomains.length > 0) {
+  // Link EXISTING domains to this order and fetch their records
+  if (existingCartDomains.length > 0) {
+    const existingDomainNames = existingCartDomains.map(d => d.domain);
+    
+    // Update existing domains to link them to this order
+    const { error: updateError } = await supabase
+      .from('domains')
+      .update({ order_id: order.id })
+      .eq('organization_id', order.organization_id)
+      .in('domain', existingDomainNames);
+
+    if (updateError) {
+      console.error('Failed to link existing domains to order:', updateError);
+    }
+
+    // Fetch the existing domain records (we need their IDs for mailboxes)
+    const { data: existingDomains, error: fetchError } = await supabase
+      .from('domains')
+      .select('*')
+      .eq('organization_id', order.organization_id)
+      .in('domain', existingDomainNames);
+
+    if (fetchError) {
+      console.error('Failed to fetch existing domains:', fetchError);
+    } else if (existingDomains) {
+      allDomains = allDomains.concat(existingDomains);
+    }
+  }
+
+  // Create mailbox records for ALL domains (new and existing)
+  if (allDomains.length > 0) {
     const mailboxInserts: any[] = [];
     
-    for (let i = 0; i < createdDomains.length; i++) {
-      const domain = createdDomains[i];
-      const cartDomain = cart.domains[i];
+    for (const domain of allDomains) {
+      // Find the cart domain config (match by domain name)
+      const cartDomain = cart.domains.find(cd => cd.domain === domain.domain);
+      if (!cartDomain) continue;
+      
       const mailboxCount = cartDomain.mailboxes.count;
       const provider = cartDomain.mailboxes.provider;
 
@@ -358,6 +429,9 @@ export async function createOrderFromCheckout(
       }
     }
   }
+  
+  // Use allDomains for the rest of the function
+  const createdDomains = allDomains;
 
   // Create invoice and payment records for the order
   await createOrderInvoiceAndPayment(order.id, order.organization_id, cart, checkoutSessionId);
@@ -478,22 +552,27 @@ async function createOrderInvoiceAndPayment(
     const invoiceItems: any[] = [];
     const todayStr = today.toISOString().split('T')[0];
 
-    // Add domain line items
+    // Add domain and mailbox line items
     for (const domain of cart.domains) {
-      const priceCents = Math.round(domain.price * 100);
       const tld = domain.tld || domain.domain.split('.').pop() || 'com';
+      
+      // Domain line item - $0 for existing domains, actual price for new domains
+      const isExisting = domain.isExisting === true;
+      const priceCents = isExisting ? 0 : Math.round(domain.price * 100);
       
       invoiceItems.push({
         invoice_id: invoice.id,
         organization_id: orgId,
-        code: `domain_registration_${tld}`,
-        description: `Domain: ${domain.domain} (1 year)`,
+        code: isExisting ? 'domain_imported' : `domain_registration_${tld}`,
+        description: isExisting 
+          ? `${domain.domain} (Imported)`
+          : `Domain: ${domain.domain} (1 year)`,
         quantity: 1,
         base_unit_price_cents: priceCents,
         final_unit_price_cents: priceCents,
         total_cents: priceCents,
         period: todayStr,
-        related_ids: { domain: domain.domain },
+        related_ids: { domain: domain.domain, isExisting },
       });
 
       // Add mailbox line item for this domain
