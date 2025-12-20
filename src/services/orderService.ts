@@ -959,6 +959,7 @@ export interface OrderLineItem {
  */
 export interface OrderWithLineItems extends Order {
   line_items: OrderLineItem[];
+  total_cents: number; // From invoice - the actual amount charged
   invoice_id?: string;
   payment_id?: string;
   receipt_url?: string;
@@ -966,7 +967,8 @@ export interface OrderWithLineItems extends Order {
 
 /**
  * Get all orders for an organization with full line items
- * Uses invoice_items for accurate pricing (what was actually charged)
+ * Uses invoice.total_cents as the source of truth for what was actually charged
+ * Uses invoice_items for accurate line item breakdown
  */
 export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
   // Get all non-pending_payment orders
@@ -981,14 +983,14 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     return [];
   }
 
-  // Get invoices for these orders
+  // Get invoices for these orders (contains the actual total_cents charged)
   const orderIds = orders.map(o => o.id);
   const { data: invoices } = await supabase
     .from('invoices')
     .select('*')
     .in('order_id', orderIds);
 
-  // Get invoice items for all order invoices (these have the actual charged prices)
+  // Get invoice_items for line item breakdown (has actual prices charged)
   const invoiceIds = (invoices || []).map(i => i.id);
   const { data: invoiceItems } = invoiceIds.length > 0
     ? await supabase
@@ -1008,62 +1010,94 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     const cart = order.cart_snapshot as CartSnapshot;
     const lineItems: OrderLineItem[] = [];
 
-    // Find invoice for this order to get actual charged prices
+    // Find invoice for this order - its total_cents is the source of truth
     const invoice = invoices?.find(i => i.order_id === order.id);
+    const payment = payments?.find(p => p.order_id === order.id);
+    
+    // Get invoice items for this order's invoice
     const orderInvoiceItems = invoiceItems?.filter(item => item.invoice_id === invoice?.id) || [];
 
-    // Build a map of domain -> mailbox price from invoice items
-    const mailboxPricesByDomain = new Map<string, number>();
+    // Build line items from invoice_items (actual charged prices)
     for (const item of orderInvoiceItems) {
-      if (item.code.startsWith('mailbox_monthly_') && item.related_ids?.domain) {
-        mailboxPricesByDomain.set(item.related_ids.domain, item.final_unit_price_cents);
-      }
-    }
-
-    // Fallback: calculate mailbox price if no invoice items exist
-    // (shouldn't happen for properly completed orders, but handles edge cases)
-    const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
-    const fallbackMailboxPrice = getMailboxPriceForQuantity(totalMailboxes);
-
-    // Add each domain as a line item
-    for (const domain of cart.domains) {
-      const priceCents = Math.round(domain.price * 100);
-      lineItems.push({
-        type: 'domain',
-        description: `Domain: ${domain.domain}`,
-        domain: domain.domain,
-        quantity: 1,
-        unit_price_cents: priceCents,
-        total_cents: priceCents,
-      });
-
-      // Add mailboxes for this domain
-      if (domain.mailboxes.count > 0) {
-        const provider = domain.mailboxes.provider;
-        const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
-        
-        // Use actual charged price from invoice, or fallback
-        const mailboxUnitPriceCents = mailboxPricesByDomain.get(domain.domain) ?? fallbackMailboxPrice;
-        
+      const isDomain = item.code.startsWith('domain_registration_');
+      const isMailbox = item.code.startsWith('mailbox_monthly_');
+      
+      if (isDomain) {
+        lineItems.push({
+          type: 'domain',
+          description: item.description || `Domain: ${item.related_ids?.domain || 'Unknown'}`,
+          domain: item.related_ids?.domain,
+          quantity: item.quantity,
+          unit_price_cents: item.final_unit_price_cents,
+          total_cents: item.total_cents,
+        });
+      } else if (isMailbox) {
+        const provider = item.related_ids?.provider as 'google' | 'microsoft' | undefined;
         lineItems.push({
           type: 'mailbox',
-          description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
-          domain: domain.domain,
+          description: item.description || `Mailbox - ${item.related_ids?.domain || 'Unknown'}`,
+          domain: item.related_ids?.domain,
           provider: provider,
-          quantity: domain.mailboxes.count,
-          unit_price_cents: mailboxUnitPriceCents,
-          total_cents: mailboxUnitPriceCents * domain.mailboxes.count,
+          quantity: item.quantity,
+          unit_price_cents: item.final_unit_price_cents,
+          total_cents: item.total_cents,
         });
       }
     }
 
-    // Find associated payment
-    const payment = payments?.find(p => p.order_id === order.id);
+    // Fallback: if no invoice_items, build from cart
+    // This handles orders created before invoice_items were being recorded
+    if (lineItems.length === 0 && cart.domains) {
+      // Calculate total domain cost
+      let totalDomainCents = 0;
+      for (const domain of cart.domains) {
+        const priceCents = Math.round(domain.price * 100);
+        totalDomainCents += priceCents;
+        lineItems.push({
+          type: 'domain',
+          description: `Domain: ${domain.domain}`,
+          domain: domain.domain,
+          quantity: 1,
+          unit_price_cents: priceCents,
+          total_cents: priceCents,
+        });
+      }
+
+      // Calculate mailbox price from invoice total minus domain total
+      const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
+      const invoiceTotalCents = invoice?.total_cents ?? 0;
+      const remainingForMailboxes = invoiceTotalCents - totalDomainCents;
+      const mailboxUnitPrice = totalMailboxes > 0 
+        ? Math.round(remainingForMailboxes / totalMailboxes) 
+        : 0;
+
+      // Add mailbox line items
+      for (const domain of cart.domains) {
+        if (domain.mailboxes.count > 0) {
+          const provider = domain.mailboxes.provider;
+          const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
+          lineItems.push({
+            type: 'mailbox',
+            description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
+            domain: domain.domain,
+            provider: provider,
+            quantity: domain.mailboxes.count,
+            unit_price_cents: mailboxUnitPrice,
+            total_cents: mailboxUnitPrice * domain.mailboxes.count,
+          });
+        }
+      }
+    }
+
+    // Use invoice total as the authoritative amount, fallback to cart totals if no invoice
+    const totalCents = invoice?.total_cents ?? 
+      Math.round((cart.totals.domainTotal + cart.totals.mailboxMonthly) * 100);
 
     return {
       ...order,
       cart_snapshot: cart,
       line_items: lineItems,
+      total_cents: totalCents,
       invoice_id: invoice?.id,
       payment_id: payment?.id,
       receipt_url: payment?.receipt_url || undefined,

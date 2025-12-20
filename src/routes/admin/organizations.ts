@@ -232,7 +232,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
           200: {
             type: 'object',
             properties: {
-              organization: { type: 'object' },
+              organization: { type: 'object', additionalProperties: true },
               members: { type: 'array' },
               domains: { type: 'array' },
               mailboxes: { type: 'array' },

@@ -181,6 +181,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
                     organization_id: { type: 'string', format: 'uuid' },
                     status: { type: 'string' },
                     created_at: { type: 'string' },
+                    total_cents: { type: 'number', description: 'Total amount charged from invoice' },
                     invoice_id: { type: 'string', format: 'uuid', nullable: true },
                     payment_id: { type: 'string', format: 'uuid', nullable: true },
                     receipt_url: { type: 'string', nullable: true },
