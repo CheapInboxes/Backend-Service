@@ -531,6 +531,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
                     organization_id: { type: 'string', format: 'uuid' },
                     status: { type: 'string' },
                     created_at: { type: 'string' },
+                    total_cents: { type: 'number', description: 'Total amount charged from invoice' },
                     cart_snapshot: { type: 'object' },
                     line_items: { type: 'array' },
                     invoice_id: { type: 'string', format: 'uuid', nullable: true },
