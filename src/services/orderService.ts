@@ -966,6 +966,7 @@ export interface OrderWithLineItems extends Order {
 
 /**
  * Get all orders for an organization with full line items
+ * Uses invoice_items for accurate pricing (what was actually charged)
  */
 export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
   // Get all non-pending_payment orders
@@ -987,6 +988,15 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     .select('*')
     .in('order_id', orderIds);
 
+  // Get invoice items for all order invoices (these have the actual charged prices)
+  const invoiceIds = (invoices || []).map(i => i.id);
+  const { data: invoiceItems } = invoiceIds.length > 0
+    ? await supabase
+        .from('invoice_items')
+        .select('*')
+        .in('invoice_id', invoiceIds)
+    : { data: [] };
+
   // Get payments for these orders
   const { data: payments } = await supabase
     .from('payments')
@@ -998,10 +1008,22 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
     const cart = order.cart_snapshot as CartSnapshot;
     const lineItems: OrderLineItem[] = [];
 
-    // Calculate mailbox unit price using volume pricing logic
-    // This matches what was actually charged to Stripe during checkout
+    // Find invoice for this order to get actual charged prices
+    const invoice = invoices?.find(i => i.order_id === order.id);
+    const orderInvoiceItems = invoiceItems?.filter(item => item.invoice_id === invoice?.id) || [];
+
+    // Build a map of domain -> mailbox price from invoice items
+    const mailboxPricesByDomain = new Map<string, number>();
+    for (const item of orderInvoiceItems) {
+      if (item.code.startsWith('mailbox_monthly_') && item.related_ids?.domain) {
+        mailboxPricesByDomain.set(item.related_ids.domain, item.final_unit_price_cents);
+      }
+    }
+
+    // Fallback: calculate mailbox price if no invoice items exist
+    // (shouldn't happen for properly completed orders, but handles edge cases)
     const totalMailboxes = cart.totals.totalGoogleMailboxes + cart.totals.totalMicrosoftMailboxes;
-    const mailboxUnitPriceCents = getMailboxPriceForQuantity(totalMailboxes);
+    const fallbackMailboxPrice = getMailboxPriceForQuantity(totalMailboxes);
 
     // Add each domain as a line item
     for (const domain of cart.domains) {
@@ -1020,6 +1042,9 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
         const provider = domain.mailboxes.provider;
         const providerName = provider === 'google' ? 'Google Workspace' : 'Microsoft 365';
         
+        // Use actual charged price from invoice, or fallback
+        const mailboxUnitPriceCents = mailboxPricesByDomain.get(domain.domain) ?? fallbackMailboxPrice;
+        
         lineItems.push({
           type: 'mailbox',
           description: `${providerName} Mailbox (First Month) - ${domain.domain}`,
@@ -1032,8 +1057,7 @@ export async function getOrders(orgId: string): Promise<OrderWithLineItems[]> {
       }
     }
 
-    // Find associated invoice and payment
-    const invoice = invoices?.find(i => i.order_id === order.id);
+    // Find associated payment
     const payment = payments?.find(p => p.order_id === order.id);
 
     return {
